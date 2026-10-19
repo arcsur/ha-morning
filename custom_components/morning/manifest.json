@@ -1,0 +1,12 @@
+{
+  "domain": "morning",
+  "name": "Morning Coffee Machine",
+  "codeowners": ["@arcsur"],
+  "config_flow": true,
+  "documentation": "https://github.com/arcsur/ha-morning",
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/arcsur/ha-morning/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

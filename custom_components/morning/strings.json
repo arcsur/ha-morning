@@ -1,0 +1,126 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Drink Morning Cloud",
+        "description": "Enter the email and password for your Morning mobile application account to discover your coffee machine.",
+        "data": {
+          "email": "Morning Account Email",
+          "password": "Password"
+        }
+      },
+      "select_machine": {
+        "title": "Select Morning Machines",
+        "description": "Multiple machines were discovered on your account. Choose which ones to add to Home Assistant:",
+        "data": {
+          "machine_ids": "Coffee Machines"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate with Drink Morning",
+        "description": "Please enter your Morning account password for {email} to renew your authentication session.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to Morning cloud servers. Please check your internet connection.",
+      "invalid_auth": "Invalid email or password. Please verify your credentials in the Drink Morning mobile app.",
+      "no_devices": "No Morning machines found linked to this account. Please pair your machine in the official Morning mobile app first.",
+      "no_machine_selected": "You must select at least one machine to continue.",
+      "unknown": "Unexpected error occurred. Please check Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This Morning account is already configured.",
+      "reauth_successful": "Reauthentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Morning Coffee Machine Options",
+        "description": "Configure the telemetry polling interval for your Morning machine(s).",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "eco": "Eco Mode",
+          "idle": "Ready",
+          "ready": "Ready",
+          "brewing": "Brewing",
+          "water": "Water Refill Needed",
+          "maintenance": "Maintenance",
+          "maintain": "Maintenance",
+          "power_off": "Powered Off",
+          "locked": "Locked",
+          "fault": "Hardware Fault",
+          "ota": "Firmware Updating",
+          "scale": "Descaling Required",
+          "setting": "Settings Mode",
+          "querying": "Querying",
+          "sync_recipe": "Syncing Recipes",
+          "purge": "Purging",
+          "wifi_setup": "Wi-Fi Setup",
+          "scale_rate": "Scale Calibration",
+          "factory_resetting": "Factory Resetting"
+        }
+      }
+    }
+  },
+  "services": {
+    "set_standby_timeout": {
+      "name": "Set Standby Timeout",
+      "description": "Updates the auto-sleep energy saving standby timeout on the Morning machine.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Morning Coffee Machine device."
+        },
+        "machine_id": {
+          "name": "Machine ID",
+          "description": "Internal hardware machine ID (e.g. M_AC67B25AC974)."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Auto-sleep standby timer duration in seconds (between 300 and 7200)."
+        }
+      }
+    },
+    "reset_machine": {
+      "name": "Reset Machine",
+      "description": "Triggers a software reset on the Morning Coffee Machine.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Morning Coffee Machine device."
+        },
+        "machine_id": {
+          "name": "Machine ID",
+          "description": "Internal hardware machine ID."
+        }
+      }
+    },
+    "check_updates": {
+      "name": "Check Updates",
+      "description": "Checks the Morning cloud backend for available firmware updates.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Morning Coffee Machine device."
+        },
+        "machine_id": {
+          "name": "Machine ID",
+          "description": "Internal hardware machine ID."
+        }
+      }
+    }
+  }
+}

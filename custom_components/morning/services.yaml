@@ -1,0 +1,68 @@
+set_standby_timeout:
+  name: Set Standby Timeout
+  description: Updates the auto-sleep energy saving standby timeout on the Morning machine.
+  target:
+    device:
+      integration: morning
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID (e.g. M_AC67B25AC974).
+      example: "M_AC67B25AC974"
+      selector:
+        text:
+    timeout:
+      name: Timeout (seconds)
+      description: Auto-sleep standby timer duration in seconds (between 300 and 7200).
+      required: true
+      default: 1800
+      selector:
+        number:
+          min: 300
+          max: 7200
+          step: 60
+          unit_of_measurement: s
+
+reset_machine:
+  name: Reset Machine
+  description: Triggers a software reset on the Morning Coffee Machine.
+  target:
+    device:
+      integration: morning
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID.
+      selector:
+        text:
+
+check_updates:
+  name: Check Updates
+  description: Checks the Morning cloud backend for available firmware updates.
+  target:
+    device:
+      integration: morning
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID.
+      selector:
+        text:
