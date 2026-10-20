@@ -135,17 +135,18 @@ class MorningClient:
             raise MorningAuthError("No refresh token available to refresh authentication")
 
         session = await self._get_session()
-        email = self._auth_session.email
-        secret_hash = self._get_secret_hash(email)
 
-        payload = {
-            "AuthFlow": "REFRESH_TOKEN_AUTH",
-            "ClientId": COGNITO_CLIENT_ID,
-            "AuthParameters": {
-                "REFRESH_TOKEN": self._auth_session.refresh_token,
-                "SECRET_HASH": secret_hash,
-            },
-        }
+        # Build candidate usernames to try for REFRESH_TOKEN_AUTH.
+        # AWS Cognito requires USERNAME in AuthParameters when the app client has a secret.
+        # Depending on Cognito configuration, it may expect the user's sub UUID or the email alias.
+        candidates: list[str] = []
+        if self._auth_session.user_id:
+            candidates.append(self._auth_session.user_id)
+        if self._auth_session.email and self._auth_session.email not in candidates:
+            candidates.append(self._auth_session.email)
+
+        if not candidates:
+            raise MorningAuthError("No username or email available to refresh authentication")
 
         headers = {
             "Content-Type": "application/x-amz-json-1.1",
@@ -153,31 +154,63 @@ class MorningClient:
             "User-Agent": API_USER_AGENT,
         }
 
-        try:
-            async with session.post(
-                COGNITO_ENDPOINT, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
-            ) as response:
-                body = await response.json(content_type=None)
-                if response.status != 200:
-                    err_type = body.get("__type", "UnknownError")
-                    err_msg = body.get("message", "Token refresh failed")
-                    _LOGGER.error("Cognito token refresh failed: %s (%s)", err_msg, err_type)
-                    raise MorningAuthError(f"Token refresh failed: {err_msg} ({err_type})")
+        last_error_type = ""
+        last_error_msg = ""
 
-                auth_result = body.get("AuthenticationResult")
-                if not auth_result or "AccessToken" not in auth_result:
-                    raise MorningAuthError("Token refresh succeeded but no tokens returned")
+        for candidate in candidates:
+            secret_hash = self._get_secret_hash(candidate)
+            payload = {
+                "AuthFlow": "REFRESH_TOKEN_AUTH",
+                "ClientId": COGNITO_CLIENT_ID,
+                "AuthParameters": {
+                    "REFRESH_TOKEN": self._auth_session.refresh_token,
+                    "SECRET_HASH": secret_hash,
+                    "USERNAME": candidate,
+                },
+            }
 
-                new_session = MorningAuthSession.from_cognito_result(
-                    auth_result, email, refresh_token=self._auth_session.refresh_token
-                )
-                self._auth_session = new_session
-                _LOGGER.debug("Successfully refreshed tokens for user: %s", email)
-                return new_session
+            try:
+                async with session.post(
+                    COGNITO_ENDPOINT,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
+                    body = await response.json(content_type=None)
+                    if response.status == 200:
+                        auth_result = body.get("AuthenticationResult")
+                        if not auth_result or "AccessToken" not in auth_result:
+                            raise MorningAuthError("Token refresh succeeded but no tokens returned")
 
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Connection error during token refresh: %s", err)
-            raise MorningConnectionError(f"Connection error during token refresh: {err}") from err
+                        new_session = MorningAuthSession.from_cognito_result(
+                            auth_result,
+                            self._auth_session.email,
+                            refresh_token=self._auth_session.refresh_token,
+                            user_id=self._auth_session.user_id
+                            or (candidate if candidate != self._auth_session.email else None),
+                        )
+                        self._auth_session = new_session
+                        _LOGGER.debug(
+                            "Successfully refreshed tokens using username %s for user: %s",
+                            candidate,
+                            self._auth_session.email,
+                        )
+                        return new_session
+
+                    last_error_type = body.get("__type", "UnknownError")
+                    last_error_msg = body.get("message", "Token refresh failed")
+                    _LOGGER.warning(
+                        "Cognito token refresh attempt with username '%s' failed: %s (%s)",
+                        candidate,
+                        last_error_msg,
+                        last_error_type,
+                    )
+            except aiohttp.ClientError as err:
+                _LOGGER.error("Connection error during token refresh: %s", err)
+                raise MorningConnectionError(f"Connection error during token refresh: {err}") from err
+
+        _LOGGER.error("All token refresh attempts failed: %s (%s)", last_error_msg, last_error_type)
+        raise MorningAuthError(f"Token refresh failed: {last_error_msg} ({last_error_type})")
 
     async def _ensure_valid_token(self) -> str:
         """Ensure token is valid and return ID token for Authorization header."""

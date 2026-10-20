@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import base64
+import json
 import time
+from dataclasses import dataclass, field
 from typing import Any
+
+
+def decode_jwt_payload(token: str) -> dict[str, Any]:
+    """Extract and decode the payload from a JWT without external libraries."""
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+        payload_b64 = parts[1]
+        padding = "=" * ((4 - len(payload_b64) % 4) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8"))
+    except Exception:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -101,6 +116,13 @@ class MorningAuthSession:
     refresh_token: str
     expires_at: float
     email: str
+    user_id: str | None = None
+
+    def __post_init__(self) -> None:
+        """Derive user_id from token claims if not explicitly provided."""
+        if not self.user_id:
+            payload = decode_jwt_payload(self.id_token) or decode_jwt_payload(self.access_token)
+            self.user_id = payload.get("sub") or payload.get("cognito:username")
 
     @property
     def is_expired(self) -> bool:
@@ -109,11 +131,15 @@ class MorningAuthSession:
 
     @classmethod
     def from_cognito_result(
-        cls, result: dict[str, Any], email: str, refresh_token: str | None = None
+        cls,
+        result: dict[str, Any],
+        email: str,
+        refresh_token: str | None = None,
+        user_id: str | None = None,
     ) -> MorningAuthSession:
         """Create auth session from Cognito InitiateAuth AuthenticationResult."""
         access_token = result["AccessToken"]
-        id_token = result["IdToken"]
+        id_token = result.get("IdToken", "")
         ref_tok = result.get("RefreshToken") or refresh_token or ""
         expires_in = int(result.get("ExpiresIn", 3600))
         expires_at = time.time() + expires_in
@@ -124,6 +150,7 @@ class MorningAuthSession:
             refresh_token=ref_tok,
             expires_at=expires_at,
             email=email,
+            user_id=user_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +161,7 @@ class MorningAuthSession:
             "refresh_token": self.refresh_token,
             "expires_at": self.expires_at,
             "email": self.email,
+            "user_id": self.user_id,
         }
 
     @classmethod
@@ -145,4 +173,5 @@ class MorningAuthSession:
             refresh_token=data.get("refresh_token", ""),
             expires_at=float(data.get("expires_at", 0)),
             email=data.get("email", ""),
+            user_id=data.get("user_id"),
         )

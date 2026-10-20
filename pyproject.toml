@@ -1,6 +1,6 @@
 [project]
 name = "ha-morning"
-version = "1.0.0"
+version = "1.0.1"
 description = "Home Assistant custom integration for the Morning Coffee Machine"
 authors = [{ name = "arcsur" }]
 readme = "README.md"

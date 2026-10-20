@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import homeassistant.helpers.config_validation as cv
 
 from .client import MorningAuthError, MorningClient, MorningConnectionError, MorningError
 from .const import (
@@ -23,6 +22,7 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN_EXPIRES_AT,
+    CONF_USER_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_SCAN_INTERVAL,
@@ -93,6 +93,7 @@ class MorningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 CONF_ID_TOKEN: auth_session.id_token,
                                 CONF_REFRESH_TOKEN: auth_session.refresh_token,
                                 CONF_TOKEN_EXPIRES_AT: auth_session.expires_at,
+                                CONF_USER_ID: auth_session.user_id,
                                 CONF_MACHINE_IDS: [machine.id],
                             },
                         )
@@ -142,6 +143,7 @@ class MorningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_ID_TOKEN: self._auth_session.id_token,
                         CONF_REFRESH_TOKEN: self._auth_session.refresh_token,
                         CONF_TOKEN_EXPIRES_AT: self._auth_session.expires_at,
+                        CONF_USER_ID: self._auth_session.user_id,
                         CONF_MACHINE_IDS: selected_ids,
                     },
                 )
@@ -196,6 +198,7 @@ class MorningConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_ID_TOKEN: auth_session.id_token,
                             CONF_REFRESH_TOKEN: auth_session.refresh_token,
                             CONF_TOKEN_EXPIRES_AT: auth_session.expires_at,
+                            CONF_USER_ID: auth_session.user_id,
                         },
                     )
                     await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)

@@ -3,18 +3,15 @@
 import base64
 import hashlib
 import hmac
-import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp import ClientError
 
 from custom_components.morning.client import (
-    MorningApiError,
     MorningAuthError,
     MorningClient,
     MorningConnectionError,
-    MorningDeviceNotFoundError,
 )
 from custom_components.morning.const import (
     COGNITO_CLIENT_ID,
@@ -108,15 +105,16 @@ class TestMorningClient(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MorningConnectionError):
             await self.client.authenticate(self.email, self.password)
 
-    async def test_refresh_tokens_success(self):
-        """Test refreshing tokens using refresh token."""
-        # Set initial auth session
+    async def test_refresh_tokens_success_with_user_id(self):
+        """Test refreshing tokens with user_id sub claim."""
+        user_uuid = "896ae5fc-40b1-707f-5047-bc86f9fc02a8"
         self.client._auth_session = MorningAuthSession(
             access_token="old_access",
             id_token="old_id",
             refresh_token="existing_refresh_token",
-            expires_at=0.0,  # Expired
+            expires_at=0.0,
             email=self.email,
+            user_id=user_uuid,
         )
 
         cognito_response = {
@@ -135,6 +133,88 @@ class TestMorningClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_session.access_token, "new_access_token")
         self.assertEqual(new_session.id_token, "new_id_token")
         self.assertEqual(new_session.refresh_token, "existing_refresh_token")
+        self.assertEqual(new_session.user_id, user_uuid)
+
+        # Verify call payload had USERNAME and SECRET_HASH for user_id
+        _, call_kwargs = self.session.post.call_args
+        auth_params = call_kwargs["json"]["AuthParameters"]
+        self.assertEqual(auth_params["USERNAME"], user_uuid)
+        self.assertEqual(auth_params["REFRESH_TOKEN"], "existing_refresh_token")
+        self.assertEqual(auth_params["SECRET_HASH"], self.client._get_secret_hash(user_uuid))
+
+    async def test_refresh_tokens_fallback_to_email_on_error(self):
+        """Test refreshing tokens falls back to email if user_id attempt fails."""
+        user_uuid = "896ae5fc-40b1-707f-5047-bc86f9fc02a8"
+        self.client._auth_session = MorningAuthSession(
+            access_token="old_access",
+            id_token="old_id",
+            refresh_token="existing_refresh_token",
+            expires_at=0.0,
+            email=self.email,
+            user_id=user_uuid,
+        )
+
+        # First call fails with NotAuthorizedException, second call succeeds
+        mock_resp_fail = AsyncMock()
+        mock_resp_fail.status = 400
+        mock_resp_fail.json = AsyncMock(
+            return_value={
+                "__type": "NotAuthorizedException",
+                "message": "Unable to verify secret hash for client",
+            }
+        )
+
+        mock_resp_success = AsyncMock()
+        mock_resp_success.status = 200
+        mock_resp_success.json = AsyncMock(
+            return_value={
+                "AuthenticationResult": {
+                    "AccessToken": "new_access_token",
+                    "IdToken": "new_id_token",
+                    "ExpiresIn": 3600,
+                }
+            }
+        )
+
+        # Context manager returns fail on first call, success on second
+        self.session.post.return_value.__aenter__.side_effect = [
+            mock_resp_fail,
+            mock_resp_success,
+        ]
+
+        new_session = await self.client.refresh_tokens()
+        self.assertEqual(new_session.access_token, "new_access_token")
+        self.assertEqual(self.session.post.call_count, 2)
+
+        # Second call should have used email
+        _, second_call_kwargs = self.session.post.call_args_list[1]
+        second_auth_params = second_call_kwargs["json"]["AuthParameters"]
+        self.assertEqual(second_auth_params["USERNAME"], self.email)
+        self.assertEqual(second_auth_params["SECRET_HASH"], self.client._get_secret_hash(self.email))
+
+    async def test_refresh_tokens_all_candidates_fail(self):
+        """Test refreshing tokens raises MorningAuthError when all candidates fail."""
+        self.client._auth_session = MorningAuthSession(
+            access_token="old_access",
+            id_token="old_id",
+            refresh_token="existing_refresh_token",
+            expires_at=0.0,
+            email=self.email,
+            user_id="bad_uuid",
+        )
+
+        mock_resp_fail = AsyncMock()
+        mock_resp_fail.status = 400
+        mock_resp_fail.json = AsyncMock(
+            return_value={
+                "__type": "NotAuthorizedException",
+                "message": "Invalid Refresh Token",
+            }
+        )
+        self.session.post.return_value.__aenter__.return_value = mock_resp_fail
+
+        with self.assertRaises(MorningAuthError):
+            await self.client.refresh_tokens()
 
     async def test_get_machines_success(self):
         """Test fetching list of user machines."""

@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.morning.client import MorningAuthError, MorningConnectionError
 from custom_components.morning.config_flow import MorningConfigFlow
-from custom_components.morning.const import CONF_EMAIL, CONF_MACHINE_IDS, CONF_PASSWORD
+from custom_components.morning.const import (
+    CONF_EMAIL,
+    CONF_MACHINE_IDS,
+    CONF_PASSWORD,
+    CONF_USER_ID,
+)
 from custom_components.morning.models import MorningAuthSession, MorningMachine
 
 
@@ -34,6 +39,7 @@ class TestMorningConfigFlow(unittest.IsolatedAsyncioTestCase):
             refresh_token="ref",
             expires_at=9999999999.0,
             email="user@example.com",
+            user_id="user_uuid_123",
         )
         mock_client.authenticate = AsyncMock(return_value=mock_auth_session)
         mock_machine = MorningMachine.from_dict(
@@ -50,6 +56,7 @@ class TestMorningConfigFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(result["title"], "Kitchen Morning")
         self.assertEqual(result["data"][CONF_EMAIL], "user@example.com")
+        self.assertEqual(result["data"][CONF_USER_ID], "user_uuid_123")
         self.assertEqual(result["data"][CONF_MACHINE_IDS], ["M_1234"])
 
     @patch("custom_components.morning.config_flow.MorningClient")

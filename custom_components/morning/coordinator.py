@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -11,7 +11,14 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import MorningAuthError, MorningClient, MorningConnectionError, MorningError
-from .const import CONF_ACCESS_TOKEN, CONF_ID_TOKEN, CONF_REFRESH_TOKEN, CONF_TOKEN_EXPIRES_AT, DOMAIN
+from .const import (
+    CONF_ACCESS_TOKEN,
+    CONF_ID_TOKEN,
+    CONF_REFRESH_TOKEN,
+    CONF_TOKEN_EXPIRES_AT,
+    CONF_USER_ID,
+    DOMAIN,
+)
 from .models import MorningMachine
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +66,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             CONF_ID_TOKEN: current_tokens.id_token,
                             CONF_REFRESH_TOKEN: current_tokens.refresh_token,
                             CONF_TOKEN_EXPIRES_AT: current_tokens.expires_at,
+                            CONF_USER_ID: current_tokens.user_id,
                         }
                     )
                     self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)

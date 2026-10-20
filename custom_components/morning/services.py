@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 import voluptuous as vol
-
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 
 from .client import MorningClient
 from .const import (

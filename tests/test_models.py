@@ -1,7 +1,22 @@
 """Unit tests for Morning data models."""
 
+import base64
+import json
 import unittest
-from custom_components.morning.models import MorningAuthSession, MorningFirmware, MorningMachine
+from typing import Any
+
+from custom_components.morning.models import (
+    MorningAuthSession,
+    MorningFirmware,
+    MorningMachine,
+    decode_jwt_payload,
+)
+
+
+def make_mock_jwt(claims: dict[str, Any]) -> str:
+    """Create a mock JWT string with the specified claims."""
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return f"header.{payload_b64}.signature"
 
 
 class TestMorningModels(unittest.TestCase):
@@ -67,28 +82,57 @@ class TestMorningModels(unittest.TestCase):
         self.assertIsNotNone(machine.firmware)
         self.assertEqual(machine.firmware.current, "1.2.0")
 
+    def test_decode_jwt_payload(self):
+        """Test decoding JWT payload helper."""
+        claims = {"sub": "896ae5fc-40b1-707f-5047-bc86f9fc02a8", "email": "user@example.com"}
+        jwt_token = make_mock_jwt(claims)
+        decoded = decode_jwt_payload(jwt_token)
+        self.assertEqual(decoded["sub"], "896ae5fc-40b1-707f-5047-bc86f9fc02a8")
+        self.assertEqual(decoded["email"], "user@example.com")
+
+        # Invalid token tests
+        self.assertEqual(decode_jwt_payload("invalid_token"), {})
+        self.assertEqual(decode_jwt_payload(""), {})
+
     def test_auth_session(self):
         """Test MorningAuthSession creation, serialization, and expiration."""
+        user_uuid = "896ae5fc-40b1-707f-5047-bc86f9fc02a8"
+        mock_id_token = make_mock_jwt({"sub": user_uuid, "email": "test@example.com"})
+
         result = {
             "AccessToken": "access_token_123",
-            "IdToken": "id_token_456",
+            "IdToken": mock_id_token,
             "RefreshToken": "refresh_token_789",
             "ExpiresIn": 3600,
         }
         session = MorningAuthSession.from_cognito_result(result, "test@example.com")
         self.assertEqual(session.access_token, "access_token_123")
-        self.assertEqual(session.id_token, "id_token_456")
+        self.assertEqual(session.id_token, mock_id_token)
         self.assertEqual(session.refresh_token, "refresh_token_789")
         self.assertEqual(session.email, "test@example.com")
+        self.assertEqual(session.user_id, user_uuid)
         self.assertFalse(session.is_expired)
 
         # Test to_dict and from_dict
         d = session.to_dict()
+        self.assertEqual(d["user_id"], user_uuid)
         restored = MorningAuthSession.from_dict(d)
         self.assertEqual(restored.access_token, session.access_token)
         self.assertEqual(restored.id_token, session.id_token)
         self.assertEqual(restored.refresh_token, session.refresh_token)
         self.assertEqual(restored.email, session.email)
+        self.assertEqual(restored.user_id, user_uuid)
+
+        # Test restoring from legacy dict without user_id extracts from id_token
+        legacy_dict = {
+            "access_token": "acc",
+            "id_token": mock_id_token,
+            "refresh_token": "ref",
+            "expires_at": 2000000000.0,
+            "email": "test@example.com",
+        }
+        restored_legacy = MorningAuthSession.from_dict(legacy_dict)
+        self.assertEqual(restored_legacy.user_id, user_uuid)
 
         # Test expired session
         expired_session = MorningAuthSession(

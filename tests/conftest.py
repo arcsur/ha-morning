@@ -1,7 +1,7 @@
 """Pytest configuration and Home Assistant test stubs."""
 
 import sys
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
 _T = TypeVar("_T")
@@ -18,7 +18,7 @@ if "homeassistant" not in sys.modules:
         class ConfigEntryAuthFailed(Exception):
             """Stub ConfigEntryAuthFailed exception."""
 
-        class MockDataUpdateCoordinator(Generic[_T]):
+        class MockDataUpdateCoordinator[T]:
             """Stub DataUpdateCoordinator."""
 
             def __init__(self, hass, logger, *, name=None, update_interval=None, **kwargs):
@@ -35,12 +35,12 @@ if "homeassistant" not in sys.modules:
             async def async_request_refresh(self):
                 self.data = await self._async_update_data()
 
-        class MockCoordinatorEntity(Generic[_CoordinatorT]):
+        class MockCoordinatorEntity[CoordinatorT]:
             """Stub CoordinatorEntity."""
 
             _attr_has_entity_name = True
 
-            def __init__(self, coordinator: _CoordinatorT):
+            def __init__(self, coordinator: CoordinatorT):
                 self.coordinator = coordinator
 
         class MockConfigFlow:

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -18,6 +17,7 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN_EXPIRES_AT,
+    CONF_USER_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     PLATFORMS,
@@ -40,6 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         refresh_token=entry.data[CONF_REFRESH_TOKEN],
         expires_at=entry.data[CONF_TOKEN_EXPIRES_AT],
         email=entry.data[CONF_EMAIL],
+        user_id=entry.data.get(CONF_USER_ID),
     )
 
     session = async_get_clientsession(hass)

@@ -1,10 +1,10 @@
 """Unit tests for Morning DataUpdateCoordinator."""
 
-from datetime import timedelta
 import unittest
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
-from custom_components.morning.client import MorningAuthError, MorningClient, MorningConnectionError
+from custom_components.morning.client import MorningClient
 from custom_components.morning.coordinator import MorningDataUpdateCoordinator
 from custom_components.morning.models import MorningAuthSession, MorningMachine
 
@@ -72,6 +72,7 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
             refresh_token="new_ref",
             expires_at=123456789.0,
             email="test@example.com",
+            user_id="user_uuid_123",
         )
 
         await self.coordinator._async_update_data()
@@ -80,6 +81,7 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         _, kwargs = self.hass.config_entries.async_update_entry.call_args
         self.assertEqual(kwargs["data"]["access_token"], "new_acc")
         self.assertEqual(kwargs["data"]["id_token"], "new_id")
+        self.assertEqual(kwargs["data"]["user_id"], "user_uuid_123")
 
 
 if __name__ == "__main__":
