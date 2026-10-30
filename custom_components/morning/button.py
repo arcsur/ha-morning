@@ -35,10 +35,35 @@ async def async_setup_entry(
             [
                 MorningResetButton(coordinator, mid),
                 MorningCheckUpdatesButton(coordinator, mid),
+                MorningRefillTankButton(coordinator, mid),
             ]
         )
 
     async_add_entities(entities)
+
+
+class MorningRefillTankButton(MorningEntity, ButtonEntity):
+    """Button to manually mark water tank as refilled."""
+
+    def __init__(
+        self,
+        coordinator: MorningDataUpdateCoordinator,
+        machine_id: str,
+    ) -> None:
+        """Initialize refill tank button."""
+        super().__init__(coordinator, machine_id)
+        self.entity_description = ButtonEntityDescription(
+            key="refill_tank",
+            name="Refill Water Tank",
+            has_entity_name=True,
+            icon="mdi:water-plus",
+        )
+        self._attr_unique_id = f"{machine_id}_refill_tank"
+
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        _LOGGER.info("Refilling water tank for Morning machine %s", self._machine_id)
+        self.coordinator.refill_tank(self._machine_id)
 
 
 class MorningResetButton(MorningEntity, ButtonEntity):

@@ -37,10 +37,39 @@ async def async_setup_entry(
                 MorningWaterLowBinarySensor(coordinator, mid),
                 MorningConnectivityBinarySensor(coordinator, mid),
                 MorningBrewingBinarySensor(coordinator, mid),
+                MorningChildLockBinarySensor(coordinator, mid),
             ]
         )
 
     async_add_entities(entities)
+
+
+class MorningChildLockBinarySensor(MorningEntity, BinarySensorEntity):
+    """Binary sensor indicating whether child lock is enabled."""
+
+    def __init__(
+        self,
+        coordinator: MorningDataUpdateCoordinator,
+        machine_id: str,
+    ) -> None:
+        """Initialize the child lock binary sensor."""
+        super().__init__(coordinator, machine_id)
+        self.entity_description = BinarySensorEntityDescription(
+            key="child_lock",
+            name="Child Lock",
+            has_entity_name=True,
+        )
+        self._attr_unique_id = f"{machine_id}_child_lock"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if child lock is enabled."""
+        return self.machine.child_lock if self.machine else None
+
+    @property
+    def icon(self) -> str:
+        """Return lock icon based on state."""
+        return "mdi:lock" if self.is_on else "mdi:lock-open-variant-outline"
 
 
 class MorningWaterLowBinarySensor(MorningEntity, BinarySensorEntity):

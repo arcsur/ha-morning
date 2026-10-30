@@ -19,11 +19,16 @@ CONF_USER_ID: Final = "user_id"
 CONF_MACHINE_ID: Final = "machine_id"
 CONF_MACHINE_IDS: Final = "machine_ids"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
+CONF_TANK_CAPACITY: Final = "tank_capacity"
+CONF_FALLBACK_BREW_VOLUME: Final = "fallback_brew_volume"
+CONF_ENABLE_IOT_STREAM: Final = "enable_iot_stream"
 
-# Default intervals
+# Default intervals & capacities
 DEFAULT_SCAN_INTERVAL: Final = 30  # seconds
 MIN_SCAN_INTERVAL: Final = 10
 MAX_SCAN_INTERVAL: Final = 300
+DEFAULT_TANK_CAPACITY: Final = 850  # ml
+DEFAULT_FALLBACK_BREW_VOLUME: Final = 50  # ml
 
 # Supported Platforms
 PLATFORMS: Final[list[Platform]] = [
@@ -39,15 +44,23 @@ COGNITO_USER_POOL_ID: Final = "ap-southeast-1_35sNfBuQq"
 COGNITO_CLIENT_ID: Final = "2cdkqojjd6hfcq6i75tqcfrij7"
 COGNITO_CLIENT_SECRET: Final = "kaear8a337jnbnfm285jn0esik1agt2fr9hvq9kenk9n5proaot"
 COGNITO_ENDPOINT: Final = "https://cognito-idp.ap-southeast-1.amazonaws.com/"
+COGNITO_IDENTITY_POOL_ID: Final = "ap-southeast-1:f5305f0e-09c7-4f5d-b390-153d2c998a5f"
+
+# AWS IoT Core endpoints & policies
+AWS_IOT_ENDPOINT: Final = "a8lnp0dy0uxch-ats.iot.ap-southeast-1.amazonaws.com"
+AWS_IOT_REGION: Final = "ap-southeast-1"
+AWS_IOT_POLICY_NAME: Final = "PRODUserIotPolicy"
 
 # Akronym / Morning Cloud REST API
 API_BASE_URL: Final = "https://api.akronym.link/v2/"
 API_USER_AGENT: Final = "Morning-HomeAssistant/1.0.0"
 
-# Service Names
+# Service Names & Attributes
 SERVICE_SET_STANDBY_TIMEOUT: Final = "set_standby_timeout"
 SERVICE_RESET_MACHINE: Final = "reset_machine"
 SERVICE_CHECK_UPDATES: Final = "check_updates"
+SERVICE_REFILL_WATER: Final = "refill_water"
+ATTR_AMOUNT_ML: Final = "amount_ml"
 
 # Machine Statuses
 STATUS_ECO: Final = "ECO"

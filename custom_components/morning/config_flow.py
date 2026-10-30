@@ -16,14 +16,18 @@ from .client import MorningAuthError, MorningClient, MorningConnectionError, Mor
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_EMAIL,
+    CONF_FALLBACK_BREW_VOLUME,
     CONF_ID_TOKEN,
     CONF_MACHINE_IDS,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
+    CONF_TANK_CAPACITY,
     CONF_TOKEN_EXPIRES_AT,
     CONF_USER_ID,
+    DEFAULT_FALLBACK_BREW_VOLUME,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TANK_CAPACITY,
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
@@ -251,9 +255,33 @@ class MorningOptionsFlowHandler(config_entries.OptionsFlow):
             CONF_SCAN_INTERVAL,
             self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         )
+        current_tank_capacity = self.config_entry.options.get(
+            CONF_TANK_CAPACITY,
+            self.config_entry.data.get(CONF_TANK_CAPACITY, DEFAULT_TANK_CAPACITY),
+        )
+        current_fallback_brew = self.config_entry.options.get(
+            CONF_FALLBACK_BREW_VOLUME,
+            self.config_entry.data.get(
+                CONF_FALLBACK_BREW_VOLUME, DEFAULT_FALLBACK_BREW_VOLUME
+            ),
+        )
 
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_TANK_CAPACITY,
+                    default=current_tank_capacity,
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=100, max=3000),
+                ),
+                vol.Optional(
+                    CONF_FALLBACK_BREW_VOLUME,
+                    default=current_fallback_brew,
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=10, max=500),
+                ),
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=current_interval,

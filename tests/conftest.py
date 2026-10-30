@@ -28,12 +28,26 @@ if "homeassistant" not in sys.modules:
                 self.update_interval = update_interval
                 self.data = {}
                 self.last_update_success = True
+                self._listeners = []
 
             async def _async_update_data(self):
                 raise NotImplementedError
 
             async def async_request_refresh(self):
                 self.data = await self._async_update_data()
+                self.async_update_listeners()
+
+            async def async_config_entry_first_refresh(self):
+                self.data = await self._async_update_data()
+                self.async_update_listeners()
+
+            def async_add_listener(self, update_callback, context=None):
+                self._listeners.append(update_callback)
+                return lambda: self._listeners.remove(update_callback) if update_callback in self._listeners else None
+
+            def async_update_listeners(self):
+                for listener in list(self._listeners):
+                    listener()
 
         class MockCoordinatorEntity[CoordinatorT]:
             """Stub CoordinatorEntity."""
@@ -102,7 +116,59 @@ if "homeassistant" not in sys.modules:
         ha_mock.const.Platform.BINARY_SENSOR = "binary_sensor"
         ha_mock.const.Platform.NUMBER = "number"
         ha_mock.const.Platform.BUTTON = "button"
+        class MockSensorEntity(MockCoordinatorEntity):
+            """Stub SensorEntity."""
+            _attr_native_value = None
+            _attr_unique_id = None
+            _attr_extra_state_attributes = {}
+            entity_description = None
+
+            @property
+            def native_value(self):
+                return self._attr_native_value
+
+            @property
+            def extra_state_attributes(self):
+                return self._attr_extra_state_attributes
+
+            async def async_added_to_hass(self):
+                pass
+
+        class MockRestoreSensor(MockSensorEntity):
+            """Stub RestoreSensor."""
+            async def async_get_last_sensor_data(self):
+                return None
+
+        class MockBinarySensorEntity(MockCoordinatorEntity):
+            """Stub BinarySensorEntity."""
+            _attr_is_on = None
+            _attr_unique_id = None
+            entity_description = None
+
+            @property
+            def is_on(self):
+                return self._attr_is_on
+
+        class MockButtonEntity(MockCoordinatorEntity):
+            """Stub ButtonEntity."""
+            _attr_unique_id = None
+            entity_description = None
+
+            async def async_press(self):
+                pass
+
+        ha_mock.const.PERCENTAGE = "%"
         ha_mock.const.UnitOfTime.SECONDS = "s"
+        ha_mock.const.UnitOfVolume = MagicMock()
+        ha_mock.const.UnitOfVolume.MILLILITERS = "mL"
+        ha_mock.const.UnitOfVolume.LITERS = "L"
+        ha_mock.const.UnitOfMass = MagicMock()
+        ha_mock.const.UnitOfMass.GRAMS = "g"
+        ha_mock.const.UnitOfTemperature = MagicMock()
+        ha_mock.const.UnitOfTemperature.CELSIUS = "°C"
+        ha_mock.const.EntityCategory = MagicMock()
+        ha_mock.const.EntityCategory.DIAGNOSTIC = "diagnostic"
+        ha_mock.const.EntityCategory.CONFIG = "config"
 
         sys.modules["homeassistant"] = ha_mock
         sys.modules["homeassistant.const"] = ha_mock.const
@@ -127,6 +193,10 @@ if "homeassistant" not in sys.modules:
         sys.modules["homeassistant.helpers.update_coordinator"].UpdateFailed = UpdateFailed
         sys.modules["homeassistant.components"] = ha_mock.components
         sys.modules["homeassistant.components.sensor"] = ha_mock.components.sensor
+        sys.modules["homeassistant.components.sensor"].SensorEntity = MockSensorEntity
+        sys.modules["homeassistant.components.sensor"].RestoreSensor = MockRestoreSensor
         sys.modules["homeassistant.components.binary_sensor"] = ha_mock.components.binary_sensor
+        sys.modules["homeassistant.components.binary_sensor"].BinarySensorEntity = MockBinarySensorEntity
         sys.modules["homeassistant.components.number"] = ha_mock.components.number
         sys.modules["homeassistant.components.button"] = ha_mock.components.button
+        sys.modules["homeassistant.components.button"].ButtonEntity = MockButtonEntity

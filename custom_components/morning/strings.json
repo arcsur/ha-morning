@@ -40,8 +40,10 @@
     "step": {
       "init": {
         "title": "Morning Coffee Machine Options",
-        "description": "Configure the telemetry polling interval for your Morning machine(s).",
+        "description": "Configure reservoir capacity and polling interval for your Morning machine(s).",
         "data": {
+          "tank_capacity": "Water tank capacity (ml)",
+          "fallback_brew_volume": "Fallback brew volume per cycle (ml)",
           "scan_interval": "Polling interval (seconds)"
         }
       }
@@ -72,6 +74,46 @@
           "scale_rate": "Scale Calibration",
           "factory_resetting": "Factory Resetting"
         }
+      },
+      "water_level_estimated": {
+        "name": "Water Tank Level"
+      },
+      "water_tank_percentage": {
+        "name": "Water Tank Percentage"
+      },
+      "brew_water_dispensed": {
+        "name": "Brew Water Dispensed"
+      },
+      "brew_mass_dispensed": {
+        "name": "Brew Mass Dispensed"
+      },
+      "brew_temperature": {
+        "name": "Brew Temperature"
+      },
+      "brew_stage": {
+        "name": "Brew Stage"
+      },
+      "brew_bloom_duration": {
+        "name": "Brew Bloom Duration"
+      },
+      "lifetime_water_used": {
+        "name": "Lifetime Water Used"
+      },
+      "slave_firmware": {
+        "name": "Motor Controller Firmware"
+      },
+      "fault_code": {
+        "name": "Fault Code"
+      }
+    },
+    "binary_sensor": {
+      "child_lock": {
+        "name": "Child Lock"
+      }
+    },
+    "button": {
+      "refill_tank": {
+        "name": "Refill Water Tank"
       }
     }
   },
@@ -119,6 +161,24 @@
         "machine_id": {
           "name": "Machine ID",
           "description": "Internal hardware machine ID."
+        }
+      }
+    },
+    "refill_water": {
+      "name": "Refill Water Tank",
+      "description": "Resets or tops up estimated water level in the Morning Coffee Machine reservoir.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Morning Coffee Machine device."
+        },
+        "machine_id": {
+          "name": "Machine ID",
+          "description": "Internal hardware machine ID."
+        },
+        "amount_ml": {
+          "name": "Amount",
+          "description": "Volume in ml to add. If empty, resets tank to full capacity."
         }
       }
     }

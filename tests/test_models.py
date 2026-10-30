@@ -59,6 +59,11 @@ class TestMorningModels(unittest.TestCase):
             "energySaveTimeOut": 1800,
             "mac": "AC:67:B2:5A:C9:74",
             "uuid": "FA2E9CAB-3178-D61A-1D29-A0974B2DEA9A",
+            "childLock": True,
+            "pumpFlowRate": {"k1": 1.1, "p1": 2.75},
+            "brew": {"count": 58, "ml": 2900},
+            "stm32Version": "1.0.4",
+            "faultInfomation": "NONE",
             "firmware": {
                 "current": "1.2.0",
                 "isLatest": True,
@@ -79,8 +84,35 @@ class TestMorningModels(unittest.TestCase):
         self.assertEqual(machine.energy_save_timeout, 1800)
         self.assertEqual(machine.mac, "AC:67:B2:5A:C9:74")
         self.assertEqual(machine.uuid, "FA2E9CAB-3178-D61A-1D29-A0974B2DEA9A")
+        self.assertTrue(machine.child_lock)
+        self.assertEqual(machine.pump_flow_rate_k1, 1.1)
+        self.assertEqual(machine.pump_flow_rate_p1, 2.75)
+        self.assertEqual(machine.total_water_ml, 2900)
+        self.assertEqual(machine.stm32_version, "1.0.4")
+        self.assertEqual(machine.fault_information, "NONE")
         self.assertIsNotNone(machine.firmware)
         self.assertEqual(machine.firmware.current, "1.2.0")
+
+    def test_live_brew_telemetry(self):
+        """Test MorningLiveBrewTelemetry defaults and mutation."""
+        from custom_components.morning.models import MorningLiveBrewTelemetry
+
+        telem = MorningLiveBrewTelemetry()
+        self.assertEqual(telem.stage, "idle")
+        self.assertEqual(telem.water_output, 0.0)
+        self.assertEqual(telem.mass_output, 0.0)
+        self.assertFalse(telem.is_brewing)
+
+        telem.stage = "brewing"
+        telem.water_output = 42.5
+        telem.mass_output = 38.2
+        telem.temperature = 93
+        telem.is_brewing = True
+        self.assertEqual(telem.stage, "brewing")
+        self.assertEqual(telem.water_output, 42.5)
+        self.assertEqual(telem.mass_output, 38.2)
+        self.assertEqual(telem.temperature, 93)
+        self.assertTrue(telem.is_brewing)
 
     def test_decode_jwt_payload(self):
         """Test decoding JWT payload helper."""

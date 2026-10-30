@@ -7,8 +7,11 @@ from custom_components.morning.client import MorningAuthError, MorningConnection
 from custom_components.morning.config_flow import MorningConfigFlow
 from custom_components.morning.const import (
     CONF_EMAIL,
+    CONF_FALLBACK_BREW_VOLUME,
     CONF_MACHINE_IDS,
     CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_TANK_CAPACITY,
     CONF_USER_ID,
 )
 from custom_components.morning.models import MorningAuthSession, MorningMachine
@@ -115,6 +118,32 @@ class TestMorningConfigFlow(unittest.IsolatedAsyncioTestCase):
         result = await self.flow.async_step_user(user_input=user_input)
         self.assertEqual(result["type"], "form")
         self.assertEqual(result["errors"], {"base": "no_devices"})
+
+    async def test_options_flow(self):
+        """Test options flow form and submission."""
+        entry = MagicMock()
+        entry.data = {CONF_SCAN_INTERVAL: 30}
+        entry.options = {
+            CONF_SCAN_INTERVAL: 45,
+            CONF_TANK_CAPACITY: 900,
+            CONF_FALLBACK_BREW_VOLUME: 60,
+        }
+
+        options_flow = self.flow.async_get_options_flow(entry)
+        result = await options_flow.async_step_init()
+        self.assertEqual(result["type"], "form")
+        self.assertEqual(result["step_id"], "init")
+
+        user_input = {
+            CONF_TANK_CAPACITY: 1000,
+            CONF_FALLBACK_BREW_VOLUME: 70,
+            CONF_SCAN_INTERVAL: 60,
+        }
+        res_create = await options_flow.async_step_init(user_input=user_input)
+        self.assertEqual(res_create["type"], "create_entry")
+        self.assertEqual(res_create["data"][CONF_TANK_CAPACITY], 1000)
+        self.assertEqual(res_create["data"][CONF_FALLBACK_BREW_VOLUME], 70)
+        self.assertEqual(res_create["data"][CONF_SCAN_INTERVAL], 60)
 
 
 if __name__ == "__main__":

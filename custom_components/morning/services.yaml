@@ -57,3 +57,29 @@ check_updates:
       description: Internal hardware machine ID.
       selector:
         text:
+
+refill_water:
+  name: Refill Water Tank
+  description: Resets or tops up estimated water level in the Morning Coffee Machine reservoir.
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID.
+      selector:
+        text:
+    amount_ml:
+      name: Amount (ml)
+      description: Specific volume in ml to add to current level. If omitted, resets tank to full capacity.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 3000
+          step: 10
+          unit_of_measurement: mL

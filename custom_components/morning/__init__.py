@@ -23,6 +23,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import MorningDataUpdateCoordinator
+from .iot import MorningIotListener
 from .models import MorningAuthSession
 from .services import async_setup_services, async_unload_services
 
@@ -60,9 +61,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_config_entry_first_refresh()
 
+    iot_listener = MorningIotListener(
+        coordinator=coordinator,
+        client=client,
+        session=session,
+    )
+    iot_listener.start()
+
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
         "coordinator": coordinator,
+        "iot_listener": iot_listener,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -79,10 +88,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a Morning config entry."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if entry_data and "iot_listener" in entry_data:
+        await entry_data["iot_listener"].stop()
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
             await async_unload_services(hass)
 

@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.morning.client import MorningClient
 from custom_components.morning.coordinator import MorningDataUpdateCoordinator
-from custom_components.morning.models import MorningAuthSession, MorningMachine
+from custom_components.morning.models import (
+    MorningAuthSession,
+    MorningLiveBrewTelemetry,
+    MorningMachine,
+)
 
 
 class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
@@ -25,6 +29,7 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         )
         self.entry = MagicMock()
         self.entry.entry_id = "test_entry_id"
+        self.entry.options = {}
         self.entry.data = {
             "email": "test@example.com",
             "access_token": "acc",
@@ -82,6 +87,136 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["data"]["access_token"], "new_acc")
         self.assertEqual(kwargs["data"]["id_token"], "new_id")
         self.assertEqual(kwargs["data"]["user_id"], "user_uuid_123")
+
+    async def test_water_level_initial_seeding_and_clamping(self):
+        """Test water level initial seeding and LOW water clamping."""
+        # Initial machine with NORMAL water level
+        m_normal = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 5,
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_normal])
+        await self.coordinator._async_update_data()
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 850.0)
+
+        # Machine drops to LOW water level
+        m_low = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "LOW",
+            "brewCount": 5,
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_low])
+        await self.coordinator._async_update_data()
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 0.0)
+
+    async def test_water_level_low_to_normal_refill(self):
+        """Test tank reseating transition from LOW to NORMAL resets water level to capacity."""
+        m_low = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "LOW",
+            "brewCount": 5,
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_low])
+        await self.coordinator._async_update_data()
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 0.0)
+
+        # User fills tank and reseats -> NORMAL
+        m_normal = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 5,
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_normal])
+        await self.coordinator._async_update_data()
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 850.0)
+
+    async def test_water_level_manual_refill(self):
+        """Test manual refill methods."""
+        self.coordinator.set_estimated_water_level("M_123", 200.0)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 200.0)
+
+        # Partial refill
+        self.coordinator.refill_tank("M_123", amount_ml=300)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 500.0)
+
+        # Full refill
+        self.coordinator.refill_tank("M_123")
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 850.0)
+
+    async def test_live_brew_telemetry_and_no_double_decrement(self):
+        """Test live brew updates decrement tank level and prevent REST poll double decrement."""
+        self.coordinator.set_estimated_water_level("M_123", 800.0)
+
+        # Brew starts
+        t1 = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=30.0,
+            mass_output=28.5,
+            temperature=92,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t1)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 770.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 30.0)
+
+        # Brew in progress
+        t2 = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=120.0,
+            mass_output=118.0,
+            temperature=93,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t2)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 680.0)
+
+        # Brew finishes
+        t3 = MorningLiveBrewTelemetry(
+            stage="done",
+            is_brewing=False,
+            water_output=120.0,
+            mass_output=118.0,
+            temperature=91,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t3)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 680.0)
+        # Value freezes and stays fixed
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 120.0)
+
+        # Now REST poll runs and detects brew_count incremented from 10 to 11
+        self.coordinator._previous_brew_counts["M_123"] = 10
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+        m_done = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 11,
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_done])
+        await self.coordinator._async_update_data()
+
+        # Water level should STILL be 680.0 (not decremented by fallback 50 ml)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 680.0)
+
+    async def test_polling_fallback_brew_decrement(self):
+        """Test polling fallback decrements water level when brew count increases without live stream."""
+        self.coordinator.set_estimated_water_level("M_123", 850.0)
+        self.coordinator._previous_brew_counts["M_123"] = 20
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+
+        m_poll = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 22,  # 2 new brews
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_poll])
+        await self.coordinator._async_update_data()
+
+        # 2 brews * 50ml fallback = 100ml decrement -> 750ml
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 750.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 100.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
 
 
 if __name__ == "__main__":

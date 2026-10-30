@@ -42,6 +42,19 @@ class MorningFirmware:
         )
 
 
+@dataclass
+class MorningLiveBrewTelemetry:
+    """Represents live telemetry from an active or recent brew."""
+
+    stage: str = "idle"  # idle, heating, brewing, done, cancelled, error
+    temperature: int = 0
+    water_output: float = 0.0
+    mass_output: float = 0.0
+    bloom_lapse: int = 0
+    is_brewing: bool = False
+    last_updated: float = 0.0
+
+
 @dataclass(frozen=True)
 class MorningMachine:
     """Represents a Morning Coffee Machine."""
@@ -65,6 +78,12 @@ class MorningMachine:
     icon: str | None = None
     photo: str | None = None
     firmware: MorningFirmware | None = None
+    child_lock: bool = False
+    total_water_ml: int = 0
+    stm32_version: str | None = None
+    fault_information: str | None = None
+    pump_flow_rate_k1: float | None = None
+    pump_flow_rate_p1: float | None = None
     raw_data: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -82,6 +101,17 @@ class MorningMachine:
             or (firmware.current if firmware else None)
             or "Unknown"
         )
+
+        # Extract nested brew info if present
+        brew_data = data.get("brew") if isinstance(data.get("brew"), dict) else {}
+        total_water_ml = int(brew_data.get("ml") or data.get("totalWaterMl") or 0)
+
+        # Extract pump flow rates
+        pump_rates = data.get("pumpFlowRate") if isinstance(data.get("pumpFlowRate"), dict) else {}
+        if not pump_rates and isinstance(data.get("pumpFlowrate"), dict):
+            pump_rates = data.get("pumpFlowrate", {})
+        k1 = float(pump_rates.get("k1") or pump_rates.get("K1")) if (pump_rates.get("k1") or pump_rates.get("K1")) is not None else None
+        p1 = float(pump_rates.get("p1") or pump_rates.get("P1")) if (pump_rates.get("p1") or pump_rates.get("P1")) is not None else None
 
         return cls(
             id=str(data.get("id", "")),
@@ -103,6 +133,12 @@ class MorningMachine:
             icon=data.get("icon"),
             photo=data.get("photo"),
             firmware=firmware,
+            child_lock=bool(data.get("childLock", False)),
+            total_water_ml=total_water_ml,
+            stm32_version=data.get("stm32Version"),
+            fault_information=data.get("faultInfomation") or data.get("faultInformation"),
+            pump_flow_rate_k1=k1,
+            pump_flow_rate_p1=p1,
             raw_data=data,
         )
 

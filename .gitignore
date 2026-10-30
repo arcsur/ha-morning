@@ -57,3 +57,8 @@ coverage.xml
 # Home Assistant local test files
 .homeassistant/
 config/
+
+# Cache & tools
+.codegraph/
+.ruff_cache/
+
