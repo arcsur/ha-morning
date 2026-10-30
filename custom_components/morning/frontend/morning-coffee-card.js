@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -18,6 +18,19 @@ const STATUS_COLORS = {
   fault: "#c0392b",
   power_off: "#7f8c8d",
 };
+
+const AVAILABLE_STATUS_ITEMS = [
+  { id: "total_brews", label: "Total Brews" },
+  { id: "limescale", label: "Limescale Counter" },
+  { id: "child_lock", label: "Child Lock" },
+  { id: "standby", label: "Standby Timeout" },
+  { id: "firmware", label: "Firmware Version" },
+  { id: "slave_firmware", label: "Motor Controller Firmware" },
+  { id: "lifetime_water", label: "Lifetime Water" },
+  { id: "fault_code", label: "Fault Code" },
+];
+
+const DEFAULT_STATUS_ITEMS = ["total_brews", "limescale", "child_lock"];
 
 class MorningCoffeeCard extends HTMLElement {
   constructor() {
@@ -35,8 +48,11 @@ class MorningCoffeeCard extends HTMLElement {
     return {
       type: "custom:morning-coffee-card",
       entity: statusEntity || "",
-      show_diagnostics: true,
+      show_header: true,
+      show_brew_section: true,
       show_water_gauge: true,
+      show_diagnostics: true,
+      status_items: [...DEFAULT_STATUS_ITEMS],
     };
   }
 
@@ -50,8 +66,11 @@ class MorningCoffeeCard extends HTMLElement {
     }
     this._config = {
       name: null,
-      show_diagnostics: true,
+      show_header: true,
+      show_brew_section: true,
       show_water_gauge: true,
+      show_diagnostics: true,
+      status_items: [...DEFAULT_STATUS_ITEMS],
       ...config,
     };
     this._resolvedEntities = {};
@@ -73,17 +92,14 @@ class MorningCoffeeCard extends HTMLElement {
     if (!this._hass) return;
     const mainEntity = this._config.entity;
     const states = this._hass.states;
-
     const explicit = this._config.entities || {};
 
-    // Extract device/name slug from main entity (e.g. "sensor.dagusmorning_status" -> "dagusmorning")
     let slug = mainEntity.replace("sensor.", "").replace("_status", "");
 
     const findEntity = (typeKey, pattern) => {
       if (explicit[typeKey] && states[explicit[typeKey]]) {
         return explicit[typeKey];
       }
-      // Exact matching candidates
       const candidates = Object.keys(states).filter((id) => {
         const idLower = id.toLowerCase();
         return (
@@ -107,6 +123,10 @@ class MorningCoffeeCard extends HTMLElement {
       limescale: findEntity("limescale", "limescale"),
       standby: findEntity("standby", "standby_timeout"),
       child_lock: findEntity("child_lock", "child_lock"),
+      firmware: findEntity("firmware", "firmware"),
+      slave_firmware: findEntity("slave_firmware", "motor_controller_firmware") || findEntity("slave_firmware", "slave_firmware"),
+      lifetime_water: findEntity("lifetime_water", "lifetime_water_used"),
+      fault_code: findEntity("fault_code", "fault_code"),
       connectivity: findEntity("connectivity", "cloud_connection") || findEntity("connectivity", "connectivity"),
       refill_button: findEntity("refill_button", "refill_water_tank"),
     };
@@ -401,12 +421,13 @@ class MorningCoffeeCard extends HTMLElement {
         /* Diagnostics Bar */
         .diag-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(auto-fit, minmax(85px, 1fr));
           gap: 8px;
           padding-top: 4px;
         }
         .diag-item {
           background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.04);
           border-radius: 8px;
           padding: 8px 10px;
           display: flex;
@@ -421,10 +442,12 @@ class MorningCoffeeCard extends HTMLElement {
           font-size: 0.95rem;
           font-weight: 600;
           margin-top: 2px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
       </style>
       <ha-card id="card-root">
-        <!-- Content dynamically injected in _updateContent -->
       </ha-card>
     `;
 
@@ -441,6 +464,67 @@ class MorningCoffeeCard extends HTMLElement {
       this._hass.callService("button", "press", { entity_id: btnEntity });
     } else {
       this._hass.callService("morning", "refill_water", {});
+    }
+  }
+
+  _renderDiagItem(id) {
+    switch (id) {
+      case "total_brews":
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Total Brews</span>
+            <span class="diag-val">${this._getValue("total_brews", "--")}</span>
+          </div>`;
+      case "limescale":
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Limescale</span>
+            <span class="diag-val">${this._getValue("limescale", "--")}</span>
+          </div>`;
+      case "child_lock": {
+        const isLocked = this._getValue("child_lock", "off") === "on";
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Child Lock</span>
+            <span class="diag-val" style="color: ${isLocked ? "#e67e22" : "inherit"};">${isLocked ? "Active" : "Off"}</span>
+          </div>`;
+      }
+      case "standby": {
+        const timeout = this._getValue("standby", "--");
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Standby</span>
+            <span class="diag-val">${timeout !== "--" ? timeout + "s" : "--"}</span>
+          </div>`;
+      }
+      case "firmware":
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Firmware</span>
+            <span class="diag-val">${this._getValue("firmware", "--")}</span>
+          </div>`;
+      case "slave_firmware":
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Motor Controller</span>
+            <span class="diag-val">${this._getValue("slave_firmware", "--")}</span>
+          </div>`;
+      case "lifetime_water": {
+        const ltr = parseFloat(this._getValue("lifetime_water", "0.0") || "0.0");
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Lifetime Water</span>
+            <span class="diag-val">${ltr.toFixed(1)} L</span>
+          </div>`;
+      }
+      case "fault_code":
+        return `
+          <div class="diag-item">
+            <span class="diag-label">Fault Code</span>
+            <span class="diag-val">${this._getValue("fault_code", "None")}</span>
+          </div>`;
+      default:
+        return "";
     }
   }
 
@@ -470,14 +554,9 @@ class MorningCoffeeCard extends HTMLElement {
     const brewTemp = this._getValue("brew_temp", "--");
     const bloomDuration = this._getValue("brew_bloom", "0");
 
-    const totalBrews = this._getValue("total_brews", "--");
-    const limescale = this._getValue("limescale", "--");
-    const childLock = this._getValue("child_lock", "off") === "on";
-
     const statusColor = STATUS_COLORS[rawStatus] || "#888";
     const statusBg = `${statusColor}22`;
 
-    // Stepper active calculation
     let currentStepIndex = STAGE_ORDER.indexOf(stage);
     if (currentStepIndex === -1) {
       currentStepIndex = isBrewing ? 2 : stage === "done" ? 3 : -1;
@@ -485,93 +564,102 @@ class MorningCoffeeCard extends HTMLElement {
 
     const heroClass = isBrewing ? "brew-hero brewing" : stage === "done" ? "brew-hero done" : "brew-hero";
 
-    let html = `
-      <!-- Header -->
-      <div class="header">
-        <div class="brand">
-          <div class="brand-icon">
-            <ha-icon icon="mdi:coffee-maker"></ha-icon>
-          </div>
-          <div class="title-block">
-            <div class="name">${machineName}</div>
-            <div class="sub">MM-730 Smart Brewer</div>
-          </div>
-        </div>
-        <div class="header-badges">
-          <span class="badge status" style="color: ${statusColor}; background: ${statusBg};">
-            ${rawStatus}
-          </span>
-          <span class="badge ${isOnline ? "online" : "offline"}">
-            ${isOnline ? "Online" : "Offline"}
-          </span>
-        </div>
-      </div>
+    let html = "";
 
-      <!-- Live Extraction & Brew Progress Monitor -->
-      <div class="${heroClass}">
-        <!-- Stepper -->
-        <div class="stepper">
-          <div class="stepper-line"></div>
-          ${STAGE_ORDER.map((stepName, idx) => {
-            const isPassed = currentStepIndex > idx || (!isBrewing && stage === "done");
-            const isActive = currentStepIndex === idx && isBrewing;
-            const cls = isActive ? "step active" : isPassed ? "step passed" : "step";
-            return `
-              <div class="${cls}">
-                <div class="step-circle">${isPassed ? "✓" : idx + 1}</div>
-                <div class="step-label">${stepName}</div>
+    // 1. Header & Title Section
+    const showHeader = this._config.show_header !== false && this._config.show_title !== false;
+    if (showHeader) {
+      html += `
+        <div class="header">
+          <div class="brand">
+            <div class="brand-icon">
+              <ha-icon icon="mdi:coffee-maker"></ha-icon>
+            </div>
+            <div class="title-block">
+              <div class="name">${machineName}</div>
+              <div class="sub">MM-730 Smart Brewer</div>
+            </div>
+          </div>
+          <div class="header-badges">
+            <span class="badge status" style="color: ${statusColor}; background: ${statusBg};">
+              ${rawStatus}
+            </span>
+            <span class="badge ${isOnline ? "online" : "offline"}">
+              ${isOnline ? "Online" : "Offline"}
+            </span>
+          </div>
+        </div>
+      `;
+    }
+
+    // 2. Brewing / Extraction Progress Monitor
+    const showBrewSection = this._config.show_brew_section !== false;
+    if (showBrewSection) {
+      html += `
+        <div class="${heroClass}">
+          <div class="stepper">
+            <div class="stepper-line"></div>
+            ${STAGE_ORDER.map((stepName, idx) => {
+              const isPassed = currentStepIndex > idx || (!isBrewing && stage === "done");
+              const isActive = currentStepIndex === idx && isBrewing;
+              const cls = isActive ? "step active" : isPassed ? "step passed" : "step";
+              return `
+                <div class="${cls}">
+                  <div class="step-circle">${isPassed ? "✓" : idx + 1}</div>
+                  <div class="step-label">${stepName}</div>
+                </div>
+              `;
+            }).join("")}
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="metric-card">
+              <div class="metric-header">
+                <ha-icon icon="mdi:water-pump"></ha-icon>
+                <span>Water Dispensed</span>
               </div>
-            `;
-          }).join("")}
-        </div>
+              <div class="metric-value">
+                ${waterDispensed.toFixed(1)}<span class="metric-unit">mL</span>
+              </div>
+            </div>
 
-        <!-- Telemetry Numbers -->
-        <div class="telemetry-grid">
-          <div class="metric-card">
-            <div class="metric-header">
-              <ha-icon icon="mdi:water-pump"></ha-icon>
-              <span>Water Dispensed</span>
+            <div class="metric-card">
+              <div class="metric-header">
+                <ha-icon icon="mdi:scale"></ha-icon>
+                <span>Mass Output</span>
+              </div>
+              <div class="metric-value">
+                ${massDispensed.toFixed(1)}<span class="metric-unit">g</span>
+              </div>
             </div>
-            <div class="metric-value">
-              ${waterDispensed.toFixed(1)}<span class="metric-unit">mL</span>
-            </div>
-          </div>
 
-          <div class="metric-card">
-            <div class="metric-header">
-              <ha-icon icon="mdi:scale"></ha-icon>
-              <span>Mass Output</span>
+            <div class="metric-card">
+              <div class="metric-header">
+                <ha-icon icon="mdi:thermometer"></ha-icon>
+                <span>Brew Temp</span>
+              </div>
+              <div class="metric-value">
+                ${brewTemp}<span class="metric-unit">${brewTemp !== "--" ? "°C" : ""}</span>
+              </div>
             </div>
-            <div class="metric-value">
-              ${massDispensed.toFixed(1)}<span class="metric-unit">g</span>
-            </div>
-          </div>
 
-          <div class="metric-card">
-            <div class="metric-header">
-              <ha-icon icon="mdi:thermometer"></ha-icon>
-              <span>Brew Temp</span>
-            </div>
-            <div class="metric-value">
-              ${brewTemp}<span class="metric-unit">${brewTemp !== "--" ? "°C" : ""}</span>
-            </div>
-          </div>
-
-          <div class="metric-card">
-            <div class="metric-header">
-              <ha-icon icon="mdi:timer-outline"></ha-icon>
-              <span>Bloom / Timer</span>
-            </div>
-            <div class="metric-value">
-              ${bloomDuration}<span class="metric-unit">s</span>
+            <div class="metric-card">
+              <div class="metric-header">
+                <ha-icon icon="mdi:timer-outline"></ha-icon>
+                <span>Bloom / Timer</span>
+              </div>
+              <div class="metric-value">
+                ${bloomDuration}<span class="metric-unit">s</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    `;
+      `;
+    }
 
-    // Water reservoir gauge
-    if (this._config.show_water_gauge) {
+    // 3. Water Reservoir Section
+    const showWaterGauge = this._config.show_water_gauge !== false;
+    if (showWaterGauge) {
       const isLow = waterLevelPct <= 15;
       const barClass = isLow ? "progress-bar low" : "progress-bar";
       html += `
@@ -599,24 +687,21 @@ class MorningCoffeeCard extends HTMLElement {
       `;
     }
 
-    // Diagnostics Bar
-    if (this._config.show_diagnostics) {
-      html += `
-        <div class="diag-grid">
-          <div class="diag-item">
-            <span class="diag-label">Total Brews</span>
-            <span class="diag-val">${totalBrews}</span>
-          </div>
-          <div class="diag-item">
-            <span class="diag-label">Limescale</span>
-            <span class="diag-val">${limescale}</span>
-          </div>
-          <div class="diag-item">
-            <span class="diag-label">Child Lock</span>
-            <span class="diag-val" style="color: ${childLock ? "#e67e22" : "inherit"};">${childLock ? "Active" : "Off"}</span>
-          </div>
-        </div>
-      `;
+    // 4. Selectable Diagnostics Bar
+    const showDiagnostics = this._config.show_diagnostics !== false;
+    const activeStats = Array.isArray(this._config.status_items)
+      ? this._config.status_items
+      : DEFAULT_STATUS_ITEMS;
+
+    if (showDiagnostics && activeStats.length > 0) {
+      const itemsHtml = activeStats
+        .map((itemId) => this._renderDiagItem(itemId))
+        .filter(Boolean)
+        .join("");
+
+      if (itemsHtml.trim().length > 0) {
+        html += `<div class="diag-grid">${itemsHtml}</div>`;
+      }
     }
 
     root.innerHTML = html;
@@ -632,41 +717,71 @@ class MorningCoffeeCard extends HTMLElement {
   }
 }
 
-// Visual Card Configuration Editor
+// Visual Card Configuration Editor (with focus preservation and selectable status items)
 class MorningCoffeeCardEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._config = {};
     this._hass = null;
+    this._isRendered = false;
   }
 
   setConfig(config) {
-    this._config = config;
-    this._render();
+    this._config = {
+      show_header: true,
+      show_brew_section: true,
+      show_water_gauge: true,
+      show_diagnostics: true,
+      status_items: [...DEFAULT_STATUS_ITEMS],
+      ...config,
+    };
+    if (!this._isRendered) {
+      this._render();
+    } else {
+      this._updateFieldValues();
+    }
   }
 
   set hass(hass) {
+    const wasRendered = this._isRendered;
     this._hass = hass;
-    this._render();
+    if (!wasRendered) {
+      this._render();
+    } else {
+      this._updateEntityOptions();
+    }
   }
 
   _render() {
     if (!this._hass) return;
 
-    const statusEntities = Object.keys(this._hass.states).filter(
-      (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning"))
-    );
-
     this.shadowRoot.innerHTML = `
       <style>
+        .editor {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          padding: 8px 0;
+          font-family: var(--paper-font-body1_-_font-family, sans-serif);
+          color: var(--primary-text-color, #ffffff);
+        }
+        .section-title {
+          font-size: 0.82rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--secondary-text-color, #888);
+          border-bottom: 1px solid var(--divider-color, rgba(255, 255, 255, 0.1));
+          padding-bottom: 4px;
+          margin-top: 6px;
+        }
         .row {
           display: flex;
           flex-direction: column;
-          margin-bottom: 12px;
         }
         label {
-          font-size: 0.85rem;
+          font-size: 0.84rem;
           font-weight: 500;
           margin-bottom: 4px;
         }
@@ -677,64 +792,197 @@ class MorningCoffeeCardEditor extends HTMLElement {
           background: var(--input-background-color, rgba(255,255,255,0.05));
           color: var(--primary-text-color, #fff);
           font-size: 0.9rem;
+          box-sizing: border-box;
+          width: 100%;
+        }
+        select:focus, input[type="text"]:focus {
+          border-color: var(--primary-color, #e67e22);
+          outline: none;
+        }
+        .checkbox-group {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
         }
         .checkbox-row {
           display: flex;
           align-items: center;
           gap: 8px;
-          margin-top: 6px;
+        }
+        .checkbox-row label {
+          margin-bottom: 0;
+          cursor: pointer;
+          font-size: 0.85rem;
+        }
+        .status-items-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 8px;
+          padding: 10px;
         }
       </style>
       <div class="editor">
+        <div class="section-title">Machine Entity</div>
         <div class="row">
-          <label>Machine Status Entity (Required)</label>
-          <select id="entity-select">
-            <option value="">Select an entity...</option>
-            ${statusEntities
-              .map(
-                (e) =>
-                  `<option value="${e}" ${this._config.entity === e ? "selected" : ""}>${e} (${this._hass.states[e].attributes.friendly_name || e})</option>`
-              )
-              .join("")}
-          </select>
+          <label for="entity-select">Machine Status Entity (Required)</label>
+          <select id="entity-select"></select>
         </div>
 
         <div class="row">
-          <label>Custom Title (Optional)</label>
-          <input type="text" id="name-input" value="${this._config.name || ""}" placeholder="Morning Machine" />
+          <label for="name-input">Custom Card Title (Optional)</label>
+          <input type="text" id="name-input" placeholder="e.g. Kitchen Morning Machine" />
         </div>
 
-        <div class="checkbox-row">
-          <input type="checkbox" id="show-gauge" ${this._config.show_water_gauge !== false ? "checked" : ""} />
-          <label for="show-gauge">Show Water Reservoir Gauge</label>
+        <div class="section-title">Display Sections</div>
+        <div class="checkbox-group">
+          <div class="checkbox-row">
+            <input type="checkbox" id="show-header" />
+            <label for="show-header">Display Header (Title, Logo & Badges)</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="show-brew" />
+            <label for="show-brew">Display Brewing / Extraction Monitor</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="show-gauge" />
+            <label for="show-gauge">Display Water Reservoir Gauge</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="show-diag" />
+            <label for="show-diag">Display Bottom Status Items</label>
+          </div>
         </div>
 
-        <div class="checkbox-row">
-          <input type="checkbox" id="show-diag" ${this._config.show_diagnostics !== false ? "checked" : ""} />
-          <label for="show-diag">Show Diagnostics Bar (Brews, Limescale, Child Lock)</label>
+        <div class="section-title">Status Items to Display</div>
+        <div class="status-items-grid" id="status-items-container">
+          ${AVAILABLE_STATUS_ITEMS.map(
+            (item) => `
+            <div class="checkbox-row">
+              <input type="checkbox" id="stat-${item.id}" data-stat-id="${item.id}" />
+              <label for="stat-${item.id}">${item.label}</label>
+            </div>
+          `
+          ).join("")}
         </div>
       </div>
     `;
 
-    this.shadowRoot.getElementById("entity-select").addEventListener("change", (e) => {
-      this._valueChanged("entity", e.target.value);
+    this._updateEntityOptions();
+    this._attachEventListeners();
+    this._isRendered = true;
+    this._updateFieldValues();
+  }
+
+  _updateEntityOptions() {
+    if (!this._hass) return;
+    const select = this.shadowRoot.getElementById("entity-select");
+    if (!select) return;
+
+    const currentVal = this._config.entity || select.value;
+    const statusEntities = Object.keys(this._hass.states).filter(
+      (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning"))
+    );
+
+    let html = `<option value="">Select a status entity...</option>`;
+    statusEntities.forEach((e) => {
+      const friendly = this._hass.states[e].attributes.friendly_name || e;
+      html += `<option value="${e}" ${currentVal === e ? "selected" : ""}>${e} (${friendly})</option>`;
     });
-    this.shadowRoot.getElementById("name-input").addEventListener("input", (e) => {
-      this._valueChanged("name", e.target.value);
+    select.innerHTML = html;
+  }
+
+  _attachEventListeners() {
+    const select = this.shadowRoot.getElementById("entity-select");
+    if (select) {
+      select.addEventListener("change", (e) => this._valueChanged("entity", e.target.value));
+    }
+
+    const nameInput = this.shadowRoot.getElementById("name-input");
+    if (nameInput) {
+      nameInput.addEventListener("input", (e) => this._valueChanged("name", e.target.value));
+    }
+
+    const bindCheckbox = (id, key) => {
+      const el = this.shadowRoot.getElementById(id);
+      if (el) {
+        el.addEventListener("change", (e) => this._valueChanged(key, e.target.checked));
+      }
+    };
+
+    bindCheckbox("show-header", "show_header");
+    bindCheckbox("show-brew", "show_brew_section");
+    bindCheckbox("show-gauge", "show_water_gauge");
+    bindCheckbox("show-diag", "show_diagnostics");
+
+    AVAILABLE_STATUS_ITEMS.forEach((item) => {
+      const cb = this.shadowRoot.getElementById(`stat-${item.id}`);
+      if (cb) {
+        cb.addEventListener("change", (e) => this._statusItemToggled(item.id, e.target.checked));
+      }
     });
-    this.shadowRoot.getElementById("show-gauge").addEventListener("change", (e) => {
-      this._valueChanged("show_water_gauge", e.target.checked);
+  }
+
+  _updateFieldValues() {
+    if (!this._isRendered) return;
+    const active = this.shadowRoot.activeElement;
+
+    const nameInput = this.shadowRoot.getElementById("name-input");
+    if (nameInput && active !== nameInput) {
+      nameInput.value = this._config.name || "";
+    }
+
+    const select = this.shadowRoot.getElementById("entity-select");
+    if (select && active !== select && select.value !== this._config.entity) {
+      select.value = this._config.entity || "";
+    }
+
+    const setChecked = (id, val) => {
+      const el = this.shadowRoot.getElementById(id);
+      if (el && active !== el) {
+        el.checked = val !== false;
+      }
+    };
+
+    setChecked("show-header", this._config.show_header !== false && this._config.show_title !== false);
+    setChecked("show-brew", this._config.show_brew_section !== false);
+    setChecked("show-gauge", this._config.show_water_gauge !== false);
+    setChecked("show-diag", this._config.show_diagnostics !== false);
+
+    const activeStats = Array.isArray(this._config.status_items)
+      ? this._config.status_items
+      : DEFAULT_STATUS_ITEMS;
+
+    AVAILABLE_STATUS_ITEMS.forEach((item) => {
+      const cb = this.shadowRoot.getElementById(`stat-${item.id}`);
+      if (cb && active !== cb) {
+        cb.checked = activeStats.includes(item.id);
+      }
     });
-    this.shadowRoot.getElementById("show-diag").addEventListener("change", (e) => {
-      this._valueChanged("show_diagnostics", e.target.checked);
-    });
+  }
+
+  _statusItemToggled(itemId, checked) {
+    let current = Array.isArray(this._config.status_items)
+      ? [...this._config.status_items]
+      : [...DEFAULT_STATUS_ITEMS];
+
+    if (checked && !current.includes(itemId)) {
+      current.push(itemId);
+    } else if (!checked && current.includes(itemId)) {
+      current = current.filter((id) => id !== itemId);
+    }
+
+    this._valueChanged("status_items", current);
   }
 
   _valueChanged(key, value) {
     if (!this._config) return;
-    const newConfig = { ...this._config, [key]: value };
+    if (this._config[key] === value) return;
+    this._config = { ...this._config, [key]: value };
     const event = new CustomEvent("config-changed", {
-      detail: { config: newConfig },
+      detail: { config: this._config },
       bubbles: true,
       composed: true,
     });
