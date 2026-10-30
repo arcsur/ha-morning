@@ -224,29 +224,80 @@ def decode_mqtt_publish(data: bytes) -> tuple[str, bytes] | None:
 def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBrewTelemetry | None:
     """Extract MorningLiveBrewTelemetry from an incoming MQTT JSON message."""
     data = payload_dict.get("data")
-    if not isinstance(data, dict):
-        return None
+    if isinstance(data, dict):
+        progress = data.get("progress")
+        if isinstance(progress, dict):
+            water_output = float(progress.get("waterOutput") or progress.get("water_output") or 0.0)
+            mass_output = float(progress.get("massOutput") or progress.get("mass_output") or 0.0)
+            temperature = int(progress.get("temperature") or 0)
+            stage_str = str(progress.get("status") or "brewing").lower()
+            bloom_lapse = int(progress.get("bloomLapse") or 0)
+            is_brewing = stage_str not in ("done", "cancel", "cancelled", "error", "water_low", "idle")
 
-    progress = data.get("progress")
-    if not isinstance(progress, dict):
-        return None
+            return MorningLiveBrewTelemetry(
+                stage=stage_str,
+                temperature=temperature,
+                water_output=water_output,
+                mass_output=mass_output,
+                bloom_lapse=bloom_lapse,
+                is_brewing=is_brewing,
+                last_updated=time.time(),
+            )
 
-    water_output = float(progress.get("waterOutput") or progress.get("water_output") or 0.0)
-    mass_output = float(progress.get("massOutput") or progress.get("mass_output") or 0.0)
-    temperature = int(progress.get("temperature") or 0)
-    stage_str = str(progress.get("status") or "brewing").lower()
-    bloom_lapse = int(progress.get("bloomLapse") or 0)
-    is_brewing = stage_str not in ("done", "cancel", "cancelled", "error", "water_low", "idle")
+        status_val = str(data.get("status") or "").lower()
+        if status_val == "purge":
+            return MorningLiveBrewTelemetry(
+                stage="purge",
+                temperature=0,
+                water_output=0.0,
+                mass_output=0.0,
+                bloom_lapse=0,
+                is_brewing=True,
+                last_updated=time.time(),
+            )
 
-    return MorningLiveBrewTelemetry(
-        stage=stage_str,
-        temperature=temperature,
-        water_output=water_output,
-        mass_output=mass_output,
-        bloom_lapse=bloom_lapse,
-        is_brewing=is_brewing,
-        last_updated=time.time(),
-    )
+    # Check for shadow reported status
+    state = payload_dict.get("state")
+    if isinstance(state, dict):
+        reported = state.get("reported")
+        if isinstance(reported, dict):
+            settings = reported.get("settings", reported)
+            status_val = str(settings.get("status") or "").lower()
+            if status_val == "purge":
+                return MorningLiveBrewTelemetry(
+                    stage="purge",
+                    temperature=0,
+                    water_output=0.0,
+                    mass_output=0.0,
+                    bloom_lapse=0,
+                    is_brewing=True,
+                    last_updated=time.time(),
+                )
+            if status_val in ("ready", "idle", "eco", "done"):
+                return MorningLiveBrewTelemetry(
+                    stage=status_val,
+                    temperature=0,
+                    water_output=0.0,
+                    mass_output=0.0,
+                    bloom_lapse=0,
+                    is_brewing=False,
+                    last_updated=time.time(),
+                )
+
+    # Check top-level status
+    status_val = str(payload_dict.get("status") or "").lower()
+    if status_val == "purge":
+        return MorningLiveBrewTelemetry(
+            stage="purge",
+            temperature=0,
+            water_output=0.0,
+            mass_output=0.0,
+            bloom_lapse=0,
+            is_brewing=True,
+            last_updated=time.time(),
+        )
+
+    return None
 
 
 class MorningIotListener:
@@ -285,9 +336,12 @@ class MorningIotListener:
         _LOGGER.debug("Stopped Morning IoT telemetry background listener")
 
     def _resolve_machine_id(self, topic: str) -> str | None:
-        """Resolve machine ID from topic string (e.g. PROD/user/{id}/{uuid}/response)."""
+        """Resolve machine ID from topic string (e.g. PROD/user/{id}/{uuid}/response or $aws/things/{id}/...)."""
         parts = topic.strip("/").split("/")
-        candidate_uuid = parts[3] if len(parts) >= 4 else None
+        if len(parts) >= 3 and parts[0] == "$aws" and parts[1] == "things":
+            candidate_uuid = parts[2]
+        else:
+            candidate_uuid = parts[3] if len(parts) >= 4 else None
 
         if self.coordinator.data:
             if candidate_uuid:
@@ -411,8 +465,12 @@ class MorningIotListener:
                     await ws.send_bytes(encode_mqtt_connect(cid))
 
                     # Subscribe to topics
-                    sub_topic = f"+/user/{identity_id}/+/response"
-                    await ws.send_bytes(encode_mqtt_subscribe(sub_topic, packet_id=1))
+                    sub_topics = [
+                        f"+/user/{identity_id}/+/response",
+                        f"+/user/{identity_id}/+/status",
+                    ]
+                    for pid, top in enumerate(sub_topics, start=1):
+                        await ws.send_bytes(encode_mqtt_subscribe(top, packet_id=pid))
 
                     last_ping = time.time()
                     while self._running and not ws.closed:

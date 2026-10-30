@@ -21,6 +21,7 @@ CONF_MACHINE_IDS: Final = "machine_ids"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_TANK_CAPACITY: Final = "tank_capacity"
 CONF_FALLBACK_BREW_VOLUME: Final = "fallback_brew_volume"
+CONF_PURGE_VOLUME: Final = "purge_volume"
 CONF_ENABLE_IOT_STREAM: Final = "enable_iot_stream"
 
 # Default intervals & capacities
@@ -29,6 +30,7 @@ MIN_SCAN_INTERVAL: Final = 10
 MAX_SCAN_INTERVAL: Final = 300
 DEFAULT_TANK_CAPACITY: Final = 850  # ml
 DEFAULT_FALLBACK_BREW_VOLUME: Final = 50  # ml
+DEFAULT_PURGE_VOLUME: Final = 30  # ml
 
 # Supported Platforms
 PLATFORMS: Final[list[Platform]] = [
@@ -60,6 +62,7 @@ SERVICE_SET_STANDBY_TIMEOUT: Final = "set_standby_timeout"
 SERVICE_RESET_MACHINE: Final = "reset_machine"
 SERVICE_CHECK_UPDATES: Final = "check_updates"
 SERVICE_REFILL_WATER: Final = "refill_water"
+SERVICE_RECORD_PURGE: Final = "record_purge"
 ATTR_AMOUNT_ML: Final = "amount_ml"
 
 # Machine Statuses

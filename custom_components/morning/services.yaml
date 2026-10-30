@@ -83,3 +83,29 @@ refill_water:
           max: 3000
           step: 10
           unit_of_measurement: mL
+
+record_purge:
+  name: Record Purge Rinse
+  description: Decrements the estimated water level in the Morning Coffee Machine reservoir for a purge rinse.
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID.
+      selector:
+        text:
+    amount_ml:
+      name: Amount (ml)
+      description: Specific volume in ml to deduct from reservoir. If omitted, uses configured purge volume.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 500
+          step: 5
+          unit_of_measurement: mL

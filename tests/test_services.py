@@ -7,6 +7,7 @@ from custom_components.morning.const import (
     ATTR_AMOUNT_ML,
     DOMAIN,
     SERVICE_CHECK_UPDATES,
+    SERVICE_RECORD_PURGE,
     SERVICE_REFILL_WATER,
     SERVICE_RESET_MACHINE,
     SERVICE_SET_STANDBY_TIMEOUT,
@@ -61,6 +62,7 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         self.assertIn(SERVICE_RESET_MACHINE, self.registered_services)
         self.assertIn(SERVICE_CHECK_UPDATES, self.registered_services)
         self.assertIn(SERVICE_REFILL_WATER, self.registered_services)
+        self.assertIn(SERVICE_RECORD_PURGE, self.registered_services)
 
         # 1. Test set_standby_timeout
         call = MagicMock()
@@ -92,12 +94,25 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         await self.registered_services[SERVICE_REFILL_WATER](call)
         self.coordinator.refill_tank.assert_called_with("M_123", amount_ml=250)
 
+        # 6. Test record_purge default amount
+        call = MagicMock()
+        call.data = {"machine_id": "M_123"}
+        await self.registered_services[SERVICE_RECORD_PURGE](call)
+        self.coordinator.record_purge.assert_called_once_with("M_123", amount_ml=None)
+
+        # 7. Test record_purge explicit amount
+        call = MagicMock()
+        call.data = {"machine_id": "M_123", ATTR_AMOUNT_ML: 40}
+        await self.registered_services[SERVICE_RECORD_PURGE](call)
+        self.coordinator.record_purge.assert_called_with("M_123", amount_ml=40)
+
     async def test_unload_services(self):
         """Test unloading services."""
         await async_setup_services(self.hass)
         self.hass.data[DOMAIN] = {}  # simulate all entries unloaded
         await async_unload_services(self.hass)
         self.assertNotIn(SERVICE_SET_STANDBY_TIMEOUT, self.registered_services)
+        self.assertNotIn(SERVICE_RECORD_PURGE, self.registered_services)
         self.assertNotIn(SERVICE_REFILL_WATER, self.registered_services)
 
 

@@ -10,6 +10,7 @@ from custom_components.morning.const import (
     CONF_FALLBACK_BREW_VOLUME,
     CONF_MACHINE_IDS,
     CONF_PASSWORD,
+    CONF_PURGE_VOLUME,
     CONF_SCAN_INTERVAL,
     CONF_TANK_CAPACITY,
     CONF_USER_ID,
@@ -127,6 +128,7 @@ class TestMorningConfigFlow(unittest.IsolatedAsyncioTestCase):
             CONF_SCAN_INTERVAL: 45,
             CONF_TANK_CAPACITY: 900,
             CONF_FALLBACK_BREW_VOLUME: 60,
+            CONF_PURGE_VOLUME: 35,
         }
 
         options_flow = self.flow.async_get_options_flow(entry)
@@ -137,12 +139,14 @@ class TestMorningConfigFlow(unittest.IsolatedAsyncioTestCase):
         user_input = {
             CONF_TANK_CAPACITY: 1000,
             CONF_FALLBACK_BREW_VOLUME: 70,
+            CONF_PURGE_VOLUME: 40,
             CONF_SCAN_INTERVAL: 60,
         }
         res_create = await options_flow.async_step_init(user_input=user_input)
         self.assertEqual(res_create["type"], "create_entry")
         self.assertEqual(res_create["data"][CONF_TANK_CAPACITY], 1000)
         self.assertEqual(res_create["data"][CONF_FALLBACK_BREW_VOLUME], 70)
+        self.assertEqual(res_create["data"][CONF_PURGE_VOLUME], 40)
         self.assertEqual(res_create["data"][CONF_SCAN_INTERVAL], 60)
 
 

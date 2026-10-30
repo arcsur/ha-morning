@@ -218,6 +218,66 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 100.0)
         self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
 
+    def test_record_purge_manual(self):
+        """Test manually recording a purge rinse decrements water level."""
+        self.coordinator.set_estimated_water_level("M_123", 800.0)
+        # Default purge volume is 30ml
+        self.coordinator.record_purge("M_123")
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 770.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 30.0)
+
+        # Explicit amount
+        self.coordinator.record_purge("M_123", amount_ml=50)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 720.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 50.0)
+
+    async def test_flow_meter_delta_purge_reconciliation(self):
+        """Test flow meter total_water_ml increase without brew decrements exact delta."""
+        self.coordinator.set_estimated_water_level("M_123", 800.0)
+        self.coordinator._previous_brew_counts["M_123"] = 10
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+        self.coordinator._previous_total_water["M_123"] = 1000
+        self.coordinator._previous_statuses["M_123"] = "READY"
+
+        m_purge = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 10,  # Brew count unchanged!
+            "status": "READY",
+            "brew": {"count": 10, "ml": 1028},  # 28ml dispensed by flow meter
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_purge])
+        await self.coordinator._async_update_data()
+
+        # 800 - 28 = 772 ml
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 772.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 28.0)
+
+    async def test_purge_status_edge_detection(self):
+        """Test status transitioning from PURGE to READY decrements configured purge volume."""
+        self.coordinator.set_estimated_water_level("M_123", 800.0)
+        self.coordinator._previous_brew_counts["M_123"] = 10
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+        self.coordinator._previous_total_water["M_123"] = 1000
+        self.coordinator._previous_statuses["M_123"] = "PURGE"
+
+        m_ready = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 10,
+            "status": "READY",
+            "brew": {"count": 10, "ml": 1000},  # total water didn't change
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_ready])
+        await self.coordinator._async_update_data()
+
+        # 800 - 30 (default purge vol) = 770 ml
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 770.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 30.0)
+
 
 if __name__ == "__main__":
     unittest.main()

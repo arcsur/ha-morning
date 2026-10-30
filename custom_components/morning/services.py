@@ -14,6 +14,7 @@ from .const import (
     ATTR_AMOUNT_ML,
     DOMAIN,
     SERVICE_CHECK_UPDATES,
+    SERVICE_RECORD_PURGE,
     SERVICE_REFILL_WATER,
     SERVICE_RESET_MACHINE,
     SERVICE_SET_STANDBY_TIMEOUT,
@@ -46,6 +47,14 @@ REFILL_WATER_SCHEMA = vol.Schema(
         vol.Optional(ATTR_DEVICE_ID): cv.string,
         vol.Optional(ATTR_MACHINE_ID): cv.string,
         vol.Optional(ATTR_AMOUNT_ML): vol.All(vol.Coerce(int), vol.Range(min=1, max=3000)),
+    }
+)
+
+RECORD_PURGE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_DEVICE_ID): cv.string,
+        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        vol.Optional(ATTR_AMOUNT_ML): vol.All(vol.Coerce(int), vol.Range(min=1, max=500)),
     }
 )
 
@@ -157,6 +166,25 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         _LOGGER.info("Refilling water tank for %s (amount: %s ml)", target_id, amount_ml or "full")
         coordinator.refill_tank(target_id, amount_ml=amount_ml)
 
+    async def handle_record_purge(call: ServiceCall) -> None:
+        """Handle recording a purge rinse."""
+        machine_id = _get_machine_id(hass, call)
+        amount_ml = call.data.get(ATTR_AMOUNT_ML)
+
+        found = _get_coordinator_for_machine(hass, machine_id)
+        if not found:
+            _LOGGER.error("Cannot find Morning machine for record_purge service call")
+            return
+
+        coordinator, _ = found
+        target_id = machine_id or (next(iter(coordinator.data.keys())) if coordinator.data else None)
+        if not target_id:
+            _LOGGER.error("No target Morning machine identified for purge")
+            return
+
+        _LOGGER.info("Recording purge rinse for %s (amount: %s ml)", target_id, amount_ml or "default")
+        coordinator.record_purge(target_id, amount_ml=amount_ml)
+
     if not hass.services.has_service(DOMAIN, SERVICE_SET_STANDBY_TIMEOUT):
         hass.services.async_register(
             DOMAIN,
@@ -189,6 +217,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             schema=REFILL_WATER_SCHEMA,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_RECORD_PURGE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RECORD_PURGE,
+            handle_record_purge,
+            schema=RECORD_PURGE_SCHEMA,
+        )
+
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Unload Morning services."""
@@ -197,3 +233,4 @@ async def async_unload_services(hass: HomeAssistant) -> None:
         hass.services.async_remove(DOMAIN, SERVICE_RESET_MACHINE)
         hass.services.async_remove(DOMAIN, SERVICE_CHECK_UPDATES)
         hass.services.async_remove(DOMAIN, SERVICE_REFILL_WATER)
+        hass.services.async_remove(DOMAIN, SERVICE_RECORD_PURGE)

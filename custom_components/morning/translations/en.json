@@ -44,6 +44,7 @@
         "data": {
           "tank_capacity": "Water tank capacity (ml)",
           "fallback_brew_volume": "Fallback brew volume per cycle (ml)",
+          "purge_volume": "Purge rinse water volume (ml)",
           "scan_interval": "Polling interval (seconds)"
         }
       }
@@ -179,6 +180,24 @@
         "amount_ml": {
           "name": "Amount",
           "description": "Volume in ml to add. If empty, resets tank to full capacity."
+        }
+      }
+    },
+    "record_purge": {
+      "name": "Record Purge Rinse",
+      "description": "Decrements the estimated water level in the Morning Coffee Machine reservoir for a purge rinse.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Morning Coffee Machine device."
+        },
+        "machine_id": {
+          "name": "Machine ID",
+          "description": "Internal hardware machine ID."
+        },
+        "amount_ml": {
+          "name": "Amount",
+          "description": "Volume in ml to deduct. If omitted, uses configured purge volume."
         }
       }
     }

@@ -20,12 +20,14 @@ from .const import (
     CONF_ID_TOKEN,
     CONF_MACHINE_IDS,
     CONF_PASSWORD,
+    CONF_PURGE_VOLUME,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_TANK_CAPACITY,
     CONF_TOKEN_EXPIRES_AT,
     CONF_USER_ID,
     DEFAULT_FALLBACK_BREW_VOLUME,
+    DEFAULT_PURGE_VOLUME,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TANK_CAPACITY,
     DOMAIN,
@@ -265,6 +267,10 @@ class MorningOptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_FALLBACK_BREW_VOLUME, DEFAULT_FALLBACK_BREW_VOLUME
             ),
         )
+        current_purge_volume = self.config_entry.options.get(
+            CONF_PURGE_VOLUME,
+            self.config_entry.data.get(CONF_PURGE_VOLUME, DEFAULT_PURGE_VOLUME),
+        )
 
         schema = vol.Schema(
             {
@@ -281,6 +287,13 @@ class MorningOptionsFlowHandler(config_entries.OptionsFlow):
                 ): vol.All(
                     vol.Coerce(int),
                     vol.Range(min=10, max=500),
+                ),
+                vol.Optional(
+                    CONF_PURGE_VOLUME,
+                    default=current_purge_volume,
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=5, max=200),
                 ),
                 vol.Optional(
                     CONF_SCAN_INTERVAL,

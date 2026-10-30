@@ -147,6 +147,34 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         mid_id = listener._resolve_machine_id(topic_id)
         self.assertEqual(mid_id, "M_123")
 
+        # Match by AWS shadow topic
+        topic_shadow = "$aws/things/M_123/shadow/update/accepted"
+        mid_shadow = listener._resolve_machine_id(topic_shadow)
+        self.assertEqual(mid_shadow, "M_123")
+
+    def test_decode_purge_payload(self):
+        """Test decoding purge status messages from various MQTT payload formats."""
+        # Format 1: data.status
+        p1 = {"data": {"status": "PURGE"}}
+        t1 = decode_brew_progress_payload(p1)
+        self.assertIsNotNone(t1)
+        self.assertEqual(t1.stage, "purge")
+        self.assertTrue(t1.is_brewing)
+
+        # Format 2: shadow reported state
+        p2 = {"state": {"reported": {"settings": {"status": "PURGE"}}}}
+        t2 = decode_brew_progress_payload(p2)
+        self.assertIsNotNone(t2)
+        self.assertEqual(t2.stage, "purge")
+        self.assertTrue(t2.is_brewing)
+
+        # Format 3: top-level status
+        p3 = {"status": "PURGE"}
+        t3 = decode_brew_progress_payload(p3)
+        self.assertIsNotNone(t3)
+        self.assertEqual(t3.stage, "purge")
+        self.assertTrue(t3.is_brewing)
+
 
 if __name__ == "__main__":
     unittest.main()

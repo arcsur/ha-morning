@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.2.1";
+const CARD_VERSION = "1.3.0";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -396,12 +396,14 @@ class MorningCoffeeCard extends HTMLElement {
           font-size: 0.78rem;
           color: var(--secondary-text-color, #888);
         }
-        .refill-btn {
-          background: rgba(52, 152, 219, 0.15);
-          border: 1px solid rgba(52, 152, 219, 0.3);
-          color: #3498db;
+        .reservoir-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .action-btn {
           border-radius: 6px;
-          padding: 5px 12px;
+          padding: 5px 10px;
           font-size: 0.72rem;
           font-weight: 600;
           cursor: pointer;
@@ -410,12 +412,26 @@ class MorningCoffeeCard extends HTMLElement {
           gap: 4px;
           transition: all 0.2s;
         }
+        .action-btn ha-icon {
+          --mdc-icon-size: 13px;
+        }
+        .purge-btn {
+          background: rgba(230, 126, 34, 0.15);
+          border: 1px solid rgba(230, 126, 34, 0.3);
+          color: #e67e22;
+        }
+        .purge-btn:hover {
+          background: rgba(230, 126, 34, 0.25);
+          border-color: #e67e22;
+        }
+        .refill-btn {
+          background: rgba(52, 152, 219, 0.15);
+          border: 1px solid rgba(52, 152, 219, 0.3);
+          color: #3498db;
+        }
         .refill-btn:hover {
           background: rgba(52, 152, 219, 0.25);
           border-color: #3498db;
-        }
-        .refill-btn ha-icon {
-          --mdc-icon-size: 13px;
         }
 
         /* Diagnostics Bar */
@@ -465,6 +481,11 @@ class MorningCoffeeCard extends HTMLElement {
     } else {
       this._hass.callService("morning", "refill_water", {});
     }
+  }
+
+  _handlePurge() {
+    if (!this._hass) return;
+    this._hass.callService("morning", "record_purge", {});
   }
 
   _renderDiagItem(id) {
@@ -678,10 +699,16 @@ class MorningCoffeeCard extends HTMLElement {
           </div>
           <div class="reservoir-footer">
             <div class="reservoir-detail">${waterLevelMl.toFixed(0)} mL remaining</div>
-            <button class="refill-btn" id="refill-action">
-              <ha-icon icon="mdi:water-plus"></ha-icon>
-              <span>Refill</span>
-            </button>
+            <div class="reservoir-actions">
+              <button class="action-btn purge-btn" id="purge-action" title="Record Purge Rinse">
+                <ha-icon icon="mdi:water-sync"></ha-icon>
+                <span>Purge</span>
+              </button>
+              <button class="action-btn refill-btn" id="refill-action" title="Refill Reservoir">
+                <ha-icon icon="mdi:water-plus"></ha-icon>
+                <span>Refill</span>
+              </button>
+            </div>
           </div>
         </div>
       `;
@@ -705,6 +732,11 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     root.innerHTML = html;
+
+    const purgeBtn = this.shadowRoot.getElementById("purge-action");
+    if (purgeBtn) {
+      purgeBtn.addEventListener("click", () => this._handlePurge());
+    }
 
     const refillBtn = this.shadowRoot.getElementById("refill-action");
     if (refillBtn) {

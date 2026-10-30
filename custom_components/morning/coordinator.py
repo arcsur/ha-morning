@@ -16,13 +16,16 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_FALLBACK_BREW_VOLUME,
     CONF_ID_TOKEN,
+    CONF_PURGE_VOLUME,
     CONF_REFRESH_TOKEN,
     CONF_TANK_CAPACITY,
     CONF_TOKEN_EXPIRES_AT,
     CONF_USER_ID,
     DEFAULT_FALLBACK_BREW_VOLUME,
+    DEFAULT_PURGE_VOLUME,
     DEFAULT_TANK_CAPACITY,
     DOMAIN,
+    STATUS_PURGE,
     WATER_LEVEL_LOW,
     WATER_LEVEL_NORMAL,
 )
@@ -59,6 +62,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self.live_telemetry: dict[str, MorningLiveBrewTelemetry] = {}
         self._previous_brew_counts: dict[str, int] = {}
         self._previous_water_levels: dict[str, str] = {}
+        self._previous_statuses: dict[str, str] = {}
+        self._previous_total_water: dict[str, int] = {}
         self._pending_live_brew_accounted: dict[str, bool] = {}
 
     def get_tank_capacity(self, machine_id: str | None = None) -> int:
@@ -81,6 +86,15 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
             )
         )
 
+    def get_purge_volume(self, machine_id: str | None = None) -> int:
+        """Return configured purge rinse volume in ml."""
+        return int(
+            self.config_entry.options.get(
+                CONF_PURGE_VOLUME,
+                self.config_entry.data.get(CONF_PURGE_VOLUME, DEFAULT_PURGE_VOLUME),
+            )
+        )
+
     def get_estimated_water_level(self, machine_id: str) -> float:
         """Return current estimated water level in ml."""
         if machine_id in self.water_tank_levels:
@@ -95,6 +109,28 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         clamped = max(0.0, min(capacity, float(level)))
         self.water_tank_levels[machine_id] = clamped
         self.pre_brew_tank_levels[machine_id] = clamped
+
+    def record_purge(self, machine_id: str, amount_ml: int | None = None) -> None:
+        """Record a purge rinse, decrementing reservoir water level."""
+        volume = float(
+            amount_ml if amount_ml is not None else self.get_purge_volume(machine_id)
+        )
+        current = self.get_estimated_water_level(machine_id)
+        self.water_tank_levels[machine_id] = max(0.0, current - volume)
+        self.pre_brew_tank_levels[machine_id] = self.water_tank_levels[machine_id]
+        self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+            stage="purge",
+            water_output=volume,
+            is_brewing=False,
+            last_updated=time.time(),
+        )
+        _LOGGER.info(
+            "Purge rinse recorded for machine %s: -%.1f ml (remaining: %.1f ml)",
+            machine_id,
+            volume,
+            self.water_tank_levels[machine_id],
+        )
+        self.async_update_listeners()
 
     def refill_tank(self, machine_id: str, amount_ml: int | None = None) -> None:
         """Refill water tank to capacity or by specific amount in ml."""
@@ -134,6 +170,19 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         # If brew just completed or stopped, mark live brew accounted for REST polling
         if was_brewing and not telem.is_brewing:
             self._pending_live_brew_accounted[machine_id] = True
+            # If purge completed without stream flow meter data, decrement configured purge volume
+            if prev_telem and prev_telem.stage == "purge" and telem.water_output == 0:
+                purge_vol = float(self.get_purge_volume(machine_id))
+                pre_brew = self.pre_brew_tank_levels.get(
+                    machine_id, self.get_estimated_water_level(machine_id)
+                )
+                self.water_tank_levels[machine_id] = max(0.0, pre_brew - purge_vol)
+                telem = MorningLiveBrewTelemetry(
+                    stage="purge",
+                    water_output=purge_vol,
+                    is_brewing=False,
+                    last_updated=time.time(),
+                )
 
         self.live_telemetry[machine_id] = telem
         self.async_update_listeners()
@@ -193,7 +242,10 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
                 # Polling fallback: decrement volume if brew count incremented without live stream
                 prev_brew_count = self._previous_brew_counts.get(mid)
-                if prev_brew_count is not None and machine.brew_count > prev_brew_count:
+                brew_count_incremented = (
+                    prev_brew_count is not None and machine.brew_count > prev_brew_count
+                )
+                if brew_count_incremented:
                     delta = machine.brew_count - prev_brew_count
                     if self._pending_live_brew_accounted.pop(mid, False):
                         _LOGGER.debug(
@@ -219,8 +271,62 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             last_updated=time.time(),
                         )
 
+                # Flow meter delta reconciliation (total_water_ml)
+                prev_total_water = self._previous_total_water.get(mid)
+                prev_status = self._previous_statuses.get(mid)
+                curr_status = machine.status.upper()
+
+                if prev_total_water is not None and machine.total_water_ml > prev_total_water:
+                    water_delta = float(machine.total_water_ml - prev_total_water)
+                    if self._pending_live_brew_accounted.pop(mid, False):
+                        _LOGGER.debug(
+                            "Total water increment of %.1f ml on %s already accounted for by live IoT stream",
+                            water_delta,
+                            mid,
+                        )
+                    elif brew_count_incremented:
+                        _LOGGER.debug(
+                            "Total water increment of %.1f ml on %s correlated with brew count increment",
+                            water_delta,
+                            mid,
+                        )
+                    else:
+                        _LOGGER.info(
+                            "Flow meter dispensed %.1f ml outside recipe on %s (purge/rinse)",
+                            water_delta,
+                            mid,
+                        )
+                        self.water_tank_levels[mid] = max(
+                            0.0, self.get_estimated_water_level(mid) - water_delta
+                        )
+                        self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                            stage="purge",
+                            water_output=water_delta,
+                            is_brewing=False,
+                            last_updated=time.time(),
+                        )
+                elif prev_status == STATUS_PURGE and curr_status != STATUS_PURGE:
+                    purge_vol = float(self.get_purge_volume(mid))
+                    _LOGGER.info(
+                        "Purge cycle completed on %s (PURGE -> %s); decrementing %.1f ml",
+                        mid,
+                        curr_status,
+                        purge_vol,
+                    )
+                    self.water_tank_levels[mid] = max(
+                        0.0, self.get_estimated_water_level(mid) - purge_vol
+                    )
+                    self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                        stage="purge",
+                        water_output=purge_vol,
+                        is_brewing=False,
+                        last_updated=time.time(),
+                    )
+
                 self._previous_water_levels[mid] = curr_level_status
                 self._previous_brew_counts[mid] = machine.brew_count
+                self._previous_statuses[mid] = curr_status
+                self._previous_total_water[mid] = machine.total_water_ml
 
             return machine_dict
 
