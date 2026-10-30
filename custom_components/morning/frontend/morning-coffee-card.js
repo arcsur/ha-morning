@@ -1,0 +1,765 @@
+/**
+ * Morning Coffee Machine Lovelace Card
+ * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
+ */
+
+const CARD_VERSION = "1.2.0";
+
+const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
+
+const STATUS_COLORS = {
+  ready: "#2ecc71",
+  idle: "#2ecc71",
+  eco: "#00b894",
+  brewing: "#e67e22",
+  heating: "#f39c12",
+  water: "#e74c3c",
+  maintenance: "#e67e22",
+  fault: "#c0392b",
+  power_off: "#7f8c8d",
+};
+
+class MorningCoffeeCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+    this._resolvedEntities = {};
+  }
+
+  static getStubConfig(hass, entities) {
+    const statusEntity = entities.find(
+      (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning_status"))
+    );
+    return {
+      type: "custom:morning-coffee-card",
+      entity: statusEntity || "",
+      show_diagnostics: true,
+      show_water_gauge: true,
+    };
+  }
+
+  static async getConfigElement() {
+    return document.createElement("morning-coffee-card-editor");
+  }
+
+  setConfig(config) {
+    if (!config.entity) {
+      throw new Error("Please define an entity (e.g. sensor.dagusmorning_status)");
+    }
+    this._config = {
+      name: null,
+      show_diagnostics: true,
+      show_water_gauge: true,
+      ...config,
+    };
+    this._resolvedEntities = {};
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._config || !this._config.entity) return;
+
+    if (Object.keys(this._resolvedEntities).length === 0) {
+      this._resolveEntities();
+    }
+
+    this._updateContent();
+  }
+
+  _resolveEntities() {
+    if (!this._hass) return;
+    const mainEntity = this._config.entity;
+    const states = this._hass.states;
+
+    const explicit = this._config.entities || {};
+
+    // Extract device/name slug from main entity (e.g. "sensor.dagusmorning_status" -> "dagusmorning")
+    let slug = mainEntity.replace("sensor.", "").replace("_status", "");
+
+    const findEntity = (typeKey, pattern) => {
+      if (explicit[typeKey] && states[explicit[typeKey]]) {
+        return explicit[typeKey];
+      }
+      // Exact matching candidates
+      const candidates = Object.keys(states).filter((id) => {
+        const idLower = id.toLowerCase();
+        return (
+          idLower.includes(pattern.toLowerCase()) &&
+          (idLower.includes(slug.toLowerCase()) || idLower.includes("morning"))
+        );
+      });
+      return candidates.length > 0 ? candidates[0] : null;
+    };
+
+    this._resolvedEntities = {
+      status: mainEntity,
+      water_level: findEntity("water_level", "water_tank_level"),
+      water_pct: findEntity("water_pct", "water_tank_percentage"),
+      brew_water: findEntity("brew_water", "brew_water_dispensed"),
+      brew_mass: findEntity("brew_mass", "brew_mass_dispensed"),
+      brew_temp: findEntity("brew_temp", "brew_temperature"),
+      brew_stage: findEntity("brew_stage", "brew_stage"),
+      brew_bloom: findEntity("brew_bloom", "brew_bloom_duration"),
+      total_brews: findEntity("total_brews", "total_brews") || findEntity("total_brews", "brew_count"),
+      limescale: findEntity("limescale", "limescale"),
+      standby: findEntity("standby", "standby_timeout"),
+      child_lock: findEntity("child_lock", "child_lock"),
+      connectivity: findEntity("connectivity", "cloud_connection") || findEntity("connectivity", "connectivity"),
+      refill_button: findEntity("refill_button", "refill_water_tank"),
+    };
+  }
+
+  _getState(key) {
+    if (!this._hass || !this._resolvedEntities[key]) return null;
+    return this._hass.states[this._resolvedEntities[key]];
+  }
+
+  _getValue(key, fallback = null) {
+    const s = this._getState(key);
+    return s && s.state !== "unavailable" && s.state !== "unknown" ? s.state : fallback;
+  }
+
+  _render() {
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host {
+          display: block;
+        }
+        ha-card {
+          padding: 18px;
+          background: var(--ha-card-background, var(--card-background-color, #1a1a1a));
+          border-radius: var(--ha-card-border-radius, 16px);
+          box-shadow: var(--ha-card-box-shadow, 0 4px 20px rgba(0,0,0,0.15));
+          color: var(--primary-text-color, #ffffff);
+          font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+          position: relative;
+          overflow: hidden;
+        }
+        .header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .brand-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.08);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .brand-icon ha-icon {
+          --mdc-icon-size: 22px;
+          color: var(--primary-color, #e67e22);
+        }
+        .title-block .name {
+          font-size: 1.15rem;
+          font-weight: 600;
+          line-height: 1.2;
+        }
+        .title-block .sub {
+          font-size: 0.75rem;
+          color: var(--secondary-text-color, #888);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .header-badges {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .badge {
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          padding: 4px 10px;
+          border-radius: 20px;
+          letter-spacing: 0.5px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .badge.online {
+          background: rgba(46, 204, 113, 0.15);
+          color: #2ecc71;
+        }
+        .badge.offline {
+          background: rgba(231, 76, 60, 0.15);
+          color: #e74c3c;
+        }
+        .badge.status {
+          border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        /* Extraction / Brewing Hero Display */
+        .brew-hero {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          padding: 16px;
+          margin-bottom: 16px;
+          transition: all 0.3s ease;
+        }
+        .brew-hero.brewing {
+          background: linear-gradient(135deg, rgba(230, 126, 34, 0.08), rgba(243, 156, 18, 0.04));
+          border-color: rgba(230, 126, 34, 0.3);
+          box-shadow: 0 0 25px rgba(230, 126, 34, 0.15);
+        }
+        .brew-hero.done {
+          background: linear-gradient(135deg, rgba(46, 204, 113, 0.08), rgba(39, 174, 96, 0.04));
+          border-color: rgba(46, 204, 113, 0.25);
+        }
+
+        /* Stepper */
+        .stepper {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          position: relative;
+          margin-bottom: 16px;
+        }
+        .stepper-line {
+          position: absolute;
+          top: 14px;
+          left: 16px;
+          right: 16px;
+          height: 2px;
+          background: rgba(255, 255, 255, 0.1);
+          z-index: 1;
+        }
+        .step {
+          position: relative;
+          z-index: 2;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+        }
+        .step-circle {
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          background: var(--card-background-color, #222);
+          border: 2px solid rgba(255, 255, 255, 0.2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.7rem;
+          color: #888;
+          transition: all 0.3s;
+        }
+        .step.active .step-circle {
+          border-color: var(--primary-color, #e67e22);
+          background: var(--primary-color, #e67e22);
+          color: #fff;
+          box-shadow: 0 0 10px var(--primary-color, #e67e22);
+        }
+        .step.passed .step-circle {
+          border-color: #2ecc71;
+          background: #2ecc71;
+          color: #fff;
+        }
+        .step-label {
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          color: var(--secondary-text-color, #888);
+          font-weight: 500;
+        }
+        .step.active .step-label {
+          color: var(--primary-color, #e67e22);
+          font-weight: 700;
+        }
+
+        /* Telemetry Grid */
+        .telemetry-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+        .metric-card {
+          background: rgba(0, 0, 0, 0.2);
+          border-radius: 10px;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+        }
+        .metric-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.72rem;
+          color: var(--secondary-text-color, #888);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+        }
+        .metric-header ha-icon {
+          --mdc-icon-size: 14px;
+        }
+        .metric-value {
+          font-size: 1.55rem;
+          font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          line-height: 1.1;
+        }
+        .metric-unit {
+          font-size: 0.85rem;
+          font-weight: 400;
+          color: var(--secondary-text-color, #aaa);
+          margin-left: 2px;
+        }
+
+        /* Water Reservoir Gauge */
+        .reservoir-section {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 12px;
+          padding: 14px 16px;
+          margin-bottom: 14px;
+        }
+        .reservoir-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .reservoir-title {
+          font-size: 0.75rem;
+          text-transform: uppercase;
+          color: var(--secondary-text-color, #888);
+          letter-spacing: 0.5px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .reservoir-title ha-icon {
+          --mdc-icon-size: 15px;
+          color: #3498db;
+        }
+        .reservoir-status {
+          font-size: 0.82rem;
+          font-weight: 600;
+        }
+        .progress-bar-container {
+          height: 10px;
+          background: rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+          overflow: hidden;
+          position: relative;
+          margin-bottom: 10px;
+        }
+        .progress-bar {
+          height: 100%;
+          border-radius: 6px;
+          background: linear-gradient(90deg, #2980b9, #3498db);
+          transition: width 0.5s ease-in-out, background 0.3s;
+        }
+        .progress-bar.low {
+          background: linear-gradient(90deg, #c0392b, #e74c3c);
+        }
+        .reservoir-footer {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .reservoir-detail {
+          font-size: 0.78rem;
+          color: var(--secondary-text-color, #888);
+        }
+        .refill-btn {
+          background: rgba(52, 152, 219, 0.15);
+          border: 1px solid rgba(52, 152, 219, 0.3);
+          color: #3498db;
+          border-radius: 6px;
+          padding: 5px 12px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.2s;
+        }
+        .refill-btn:hover {
+          background: rgba(52, 152, 219, 0.25);
+          border-color: #3498db;
+        }
+        .refill-btn ha-icon {
+          --mdc-icon-size: 13px;
+        }
+
+        /* Diagnostics Bar */
+        .diag-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          padding-top: 4px;
+        }
+        .diag-item {
+          background: rgba(255, 255, 255, 0.02);
+          border-radius: 8px;
+          padding: 8px 10px;
+          display: flex;
+          flex-direction: column;
+        }
+        .diag-label {
+          font-size: 0.68rem;
+          color: var(--secondary-text-color, #777);
+          text-transform: uppercase;
+        }
+        .diag-val {
+          font-size: 0.95rem;
+          font-weight: 600;
+          margin-top: 2px;
+        }
+      </style>
+      <ha-card id="card-root">
+        <!-- Content dynamically injected in _updateContent -->
+      </ha-card>
+    `;
+
+    const refillBtn = this.shadowRoot.getElementById("refill-action");
+    if (refillBtn) {
+      refillBtn.addEventListener("click", () => this._handleRefill());
+    }
+  }
+
+  _handleRefill() {
+    if (!this._hass) return;
+    const btnEntity = this._resolvedEntities.refill_button;
+    if (btnEntity && this._hass.states[btnEntity]) {
+      this._hass.callService("button", "press", { entity_id: btnEntity });
+    } else {
+      this._hass.callService("morning", "refill_water", {});
+    }
+  }
+
+  _updateContent() {
+    const root = this.shadowRoot.getElementById("card-root");
+    if (!root) return;
+
+    const statusState = this._getState("status");
+    if (!statusState) {
+      root.innerHTML = `<div style="padding: 16px; text-align: center; color: #888;">Entity unavailable</div>`;
+      return;
+    }
+
+    const machineName =
+      this._config.name || statusState.attributes.friendly_name || "Morning Coffee Machine";
+    const rawStatus = (statusState.state || "unknown").toLowerCase();
+    const isOnline = this._getValue("connectivity", "on") === "on";
+
+    // Telemetry values
+    const waterLevelMl = parseFloat(this._getValue("water_level", "850"));
+    const waterLevelPct = parseFloat(this._getValue("water_pct", "100"));
+    const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
+    const isBrewing = rawStatus === "brewing" || (stage !== "idle" && stage !== "done");
+
+    const waterDispensed = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
+    const massDispensed = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
+    const brewTemp = this._getValue("brew_temp", "--");
+    const bloomDuration = this._getValue("brew_bloom", "0");
+
+    const totalBrews = this._getValue("total_brews", "--");
+    const limescale = this._getValue("limescale", "--");
+    const childLock = this._getValue("child_lock", "off") === "on";
+
+    const statusColor = STATUS_COLORS[rawStatus] || "#888";
+    const statusBg = `${statusColor}22`;
+
+    // Stepper active calculation
+    let currentStepIndex = STAGE_ORDER.indexOf(stage);
+    if (currentStepIndex === -1) {
+      currentStepIndex = isBrewing ? 2 : stage === "done" ? 3 : -1;
+    }
+
+    const heroClass = isBrewing ? "brew-hero brewing" : stage === "done" ? "brew-hero done" : "brew-hero";
+
+    let html = `
+      <!-- Header -->
+      <div class="header">
+        <div class="brand">
+          <div class="brand-icon">
+            <ha-icon icon="mdi:coffee-maker"></ha-icon>
+          </div>
+          <div class="title-block">
+            <div class="name">${machineName}</div>
+            <div class="sub">MM-730 Smart Brewer</div>
+          </div>
+        </div>
+        <div class="header-badges">
+          <span class="badge status" style="color: ${statusColor}; background: ${statusBg};">
+            ${rawStatus}
+          </span>
+          <span class="badge ${isOnline ? "online" : "offline"}">
+            ${isOnline ? "Online" : "Offline"}
+          </span>
+        </div>
+      </div>
+
+      <!-- Live Extraction & Brew Progress Monitor -->
+      <div class="${heroClass}">
+        <!-- Stepper -->
+        <div class="stepper">
+          <div class="stepper-line"></div>
+          ${STAGE_ORDER.map((stepName, idx) => {
+            const isPassed = currentStepIndex > idx || (!isBrewing && stage === "done");
+            const isActive = currentStepIndex === idx && isBrewing;
+            const cls = isActive ? "step active" : isPassed ? "step passed" : "step";
+            return `
+              <div class="${cls}">
+                <div class="step-circle">${isPassed ? "✓" : idx + 1}</div>
+                <div class="step-label">${stepName}</div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+
+        <!-- Telemetry Numbers -->
+        <div class="telemetry-grid">
+          <div class="metric-card">
+            <div class="metric-header">
+              <ha-icon icon="mdi:water-pump"></ha-icon>
+              <span>Water Dispensed</span>
+            </div>
+            <div class="metric-value">
+              ${waterDispensed.toFixed(1)}<span class="metric-unit">mL</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <ha-icon icon="mdi:scale"></ha-icon>
+              <span>Mass Output</span>
+            </div>
+            <div class="metric-value">
+              ${massDispensed.toFixed(1)}<span class="metric-unit">g</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <ha-icon icon="mdi:thermometer"></ha-icon>
+              <span>Brew Temp</span>
+            </div>
+            <div class="metric-value">
+              ${brewTemp}<span class="metric-unit">${brewTemp !== "--" ? "°C" : ""}</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <ha-icon icon="mdi:timer-outline"></ha-icon>
+              <span>Bloom / Timer</span>
+            </div>
+            <div class="metric-value">
+              ${bloomDuration}<span class="metric-unit">s</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Water reservoir gauge
+    if (this._config.show_water_gauge) {
+      const isLow = waterLevelPct <= 15;
+      const barClass = isLow ? "progress-bar low" : "progress-bar";
+      html += `
+        <div class="reservoir-section">
+          <div class="reservoir-header">
+            <div class="reservoir-title">
+              <ha-icon icon="mdi:water"></ha-icon>
+              <span>Water Reservoir</span>
+            </div>
+            <div class="reservoir-status" style="color: ${isLow ? "#e74c3c" : "#3498db"};">
+              ${waterLevelPct.toFixed(0)}%
+            </div>
+          </div>
+          <div class="progress-bar-container">
+            <div class="${barClass}" style="width: ${Math.min(100, Math.max(0, waterLevelPct))}%;"></div>
+          </div>
+          <div class="reservoir-footer">
+            <div class="reservoir-detail">${waterLevelMl.toFixed(0)} mL remaining</div>
+            <button class="refill-btn" id="refill-action">
+              <ha-icon icon="mdi:water-plus"></ha-icon>
+              <span>Refill</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Diagnostics Bar
+    if (this._config.show_diagnostics) {
+      html += `
+        <div class="diag-grid">
+          <div class="diag-item">
+            <span class="diag-label">Total Brews</span>
+            <span class="diag-val">${totalBrews}</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Limescale</span>
+            <span class="diag-val">${limescale}</span>
+          </div>
+          <div class="diag-item">
+            <span class="diag-label">Child Lock</span>
+            <span class="diag-val" style="color: ${childLock ? "#e67e22" : "inherit"};">${childLock ? "Active" : "Off"}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    root.innerHTML = html;
+
+    const refillBtn = this.shadowRoot.getElementById("refill-action");
+    if (refillBtn) {
+      refillBtn.addEventListener("click", () => this._handleRefill());
+    }
+  }
+
+  getCardSize() {
+    return 4;
+  }
+}
+
+// Visual Card Configuration Editor
+class MorningCoffeeCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+  }
+
+  setConfig(config) {
+    this._config = config;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  _render() {
+    if (!this._hass) return;
+
+    const statusEntities = Object.keys(this._hass.states).filter(
+      (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning"))
+    );
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        .row {
+          display: flex;
+          flex-direction: column;
+          margin-bottom: 12px;
+        }
+        label {
+          font-size: 0.85rem;
+          font-weight: 500;
+          margin-bottom: 4px;
+        }
+        select, input[type="text"] {
+          padding: 8px 10px;
+          border-radius: 6px;
+          border: 1px solid var(--divider-color, #444);
+          background: var(--input-background-color, rgba(255,255,255,0.05));
+          color: var(--primary-text-color, #fff);
+          font-size: 0.9rem;
+        }
+        .checkbox-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 6px;
+        }
+      </style>
+      <div class="editor">
+        <div class="row">
+          <label>Machine Status Entity (Required)</label>
+          <select id="entity-select">
+            <option value="">Select an entity...</option>
+            ${statusEntities
+              .map(
+                (e) =>
+                  `<option value="${e}" ${this._config.entity === e ? "selected" : ""}>${e} (${this._hass.states[e].attributes.friendly_name || e})</option>`
+              )
+              .join("")}
+          </select>
+        </div>
+
+        <div class="row">
+          <label>Custom Title (Optional)</label>
+          <input type="text" id="name-input" value="${this._config.name || ""}" placeholder="Morning Machine" />
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="show-gauge" ${this._config.show_water_gauge !== false ? "checked" : ""} />
+          <label for="show-gauge">Show Water Reservoir Gauge</label>
+        </div>
+
+        <div class="checkbox-row">
+          <input type="checkbox" id="show-diag" ${this._config.show_diagnostics !== false ? "checked" : ""} />
+          <label for="show-diag">Show Diagnostics Bar (Brews, Limescale, Child Lock)</label>
+        </div>
+      </div>
+    `;
+
+    this.shadowRoot.getElementById("entity-select").addEventListener("change", (e) => {
+      this._valueChanged("entity", e.target.value);
+    });
+    this.shadowRoot.getElementById("name-input").addEventListener("input", (e) => {
+      this._valueChanged("name", e.target.value);
+    });
+    this.shadowRoot.getElementById("show-gauge").addEventListener("change", (e) => {
+      this._valueChanged("show_water_gauge", e.target.checked);
+    });
+    this.shadowRoot.getElementById("show-diag").addEventListener("change", (e) => {
+      this._valueChanged("show_diagnostics", e.target.checked);
+    });
+  }
+
+  _valueChanged(key, value) {
+    if (!this._config) return;
+    const newConfig = { ...this._config, [key]: value };
+    const event = new CustomEvent("config-changed", {
+      detail: { config: newConfig },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
+  }
+}
+
+if (!customElements.get("morning-coffee-card")) {
+  customElements.define("morning-coffee-card", MorningCoffeeCard);
+}
+if (!customElements.get("morning-coffee-card-editor")) {
+  customElements.define("morning-coffee-card-editor", MorningCoffeeCardEditor);
+}
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "morning-coffee-card",
+  name: "Morning Coffee Machine Card",
+  description: "Display Morning Machine telemetry, water level, and live brewing progress.",
+  preview: true,
+  documentationURL: "https://github.com/arcsur/ha-morning",
+});
+
+console.info(
+  `%c MORNING-COFFEE-CARD %c v${CARD_VERSION} `,
+  "color: white; background: #e67e22; font-weight: 700;",
+  "color: #e67e22; background: rgba(230, 126, 34, 0.1); font-weight: 700;"
+);

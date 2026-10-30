@@ -74,6 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "iot_listener": iot_listener,
     }
 
+    await _async_register_frontend(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_setup_services(hass)
 
@@ -84,6 +85,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data[CONF_EMAIL],
     )
     return True
+
+
+async def _async_register_frontend(hass: HomeAssistant) -> None:
+    """Register custom Lovelace card static path and inject script into frontend."""
+    if hass.data.setdefault("morning_frontend_registered", False):
+        return
+
+    from pathlib import Path
+    card_path = Path(__file__).parent / "frontend" / "morning-coffee-card.js"
+    if not card_path.exists():
+        return
+
+    url = "/morning-card/morning-coffee-card.js"
+
+    # Register HTTP static route if HTTP component is active
+    if hasattr(hass, "http") and hass.http:
+        try:
+            if hasattr(hass.http, "async_register_static_paths"):
+                from homeassistant.components.http import StaticPathConfig
+
+                await hass.http.async_register_static_paths(
+                    [StaticPathConfig(url, str(card_path), cache_headers=False)]
+                )
+            elif hasattr(hass.http, "register_static_path"):
+                hass.http.register_static_path(url, str(card_path), cache_headers=False)
+        except Exception as err:
+            _LOGGER.debug("Could not register static path for morning-coffee-card: %s", err)
+
+    # Inject extra JS URL into frontend
+    try:
+        from homeassistant.components.frontend import add_extra_js_url
+
+        add_extra_js_url(hass, url)
+        _LOGGER.debug("Injected %s into Lovelace frontend", url)
+    except Exception as err:
+        _LOGGER.debug("Could not add_extra_js_url for morning-coffee-card: %s", err)
+
+    hass.data["morning_frontend_registered"] = True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

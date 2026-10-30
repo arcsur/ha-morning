@@ -200,3 +200,8 @@ if "homeassistant" not in sys.modules:
         sys.modules["homeassistant.components.number"] = ha_mock.components.number
         sys.modules["homeassistant.components.button"] = ha_mock.components.button
         sys.modules["homeassistant.components.button"].ButtonEntity = MockButtonEntity
+        ha_mock.components.http = MagicMock()
+        ha_mock.components.http.StaticPathConfig = MagicMock
+        ha_mock.components.frontend = MagicMock()
+        sys.modules["homeassistant.components.http"] = ha_mock.components.http
+        sys.modules["homeassistant.components.frontend"] = ha_mock.components.frontend

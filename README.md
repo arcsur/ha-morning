@@ -15,20 +15,30 @@ Integrate your Morning coffee machine with Home Assistant using your official Dr
 ## Features
 
 - **Seamless Cloud Discovery**: Log in with your Morning mobile app email and password. All paired machines are automatically discovered—no need to configure local IPs, Bluetooth pairing, or MAC addresses.
-- **Real-Time Telemetry & Status**:
+- **Real-Time Brewing & Telemetry**:
+  - Live extraction monitoring (dispensed water $\text{mL}$, mass $\text{g}$, brew temperature $^\circ\text{C}$, bloom timer $\text{s}$).
+  - Live-to-sticky state: values update dynamically during extraction, freeze on completion, and stay fixed until next brew.
+  - Estimated water reservoir level tracking with dynamic decrement and low-water sensor clamping.
   - Operational state (`Ready`, `Eco Mode`, `Brewing`, `Water Refill Needed`, `Maintenance`, `Hardware Fault`, etc.)
   - Total brew cycles count (`state_class: total_increasing`)
   - Limescale accumulation / descaling urgency meter
   - Current firmware version and update availability
+- **Custom Lovelace Card (`morning-coffee-card`)**:
+  - Bundled directly inside the integration; automatically loaded without manual resource registration.
+  - Displays OLED-style machine status, animated water reservoir level gauge with quick-refill action button, and live extraction stepper (`Heating` $\rightarrow$ `Blooming` $\rightarrow$ `Extracting` $\rightarrow$ `Done`).
+  - Visual card editor with entity auto-discovery.
 - **Binary Sensors**:
   - **Water Tank Low**: Problem sensor indicating when the reservoir requires refilling.
   - **Cloud Connection**: Connectivity sensor tracking whether the machine is online.
   - **Brewing**: Running indicator indicating active coffee brewing.
+  - **Child Lock**: Security state indicating machine control panel lock.
 - **Control & Configuration**:
+  - **Refill Water Tank**: Button entity to reset reservoir water level to full capacity.
   - **Standby Timeout Setting**: Adjust the machine's auto-sleep timeout directly from Home Assistant (from 5 minutes up to 2 hours).
   - **Reset Machine**: Button entity to send a soft restart command to the machine.
   - **Check Updates**: Button entity to check for OTA firmware updates.
 - **Custom Services**:
+  - `morning.refill_water`: Programmatically refill or top up reservoir volume in automations.
   - `morning.set_standby_timeout`: Programmatically adjust auto-sleep durations in automations.
   - `morning.reset_machine`: Trigger machine reboot.
   - `morning.check_updates`: Query cloud backend for latest firmware.
@@ -120,6 +130,21 @@ To change the polling frequency:
 | **Number** | Standby Timeout Setting | `number.<machine>_standby_timeout_setting` | Slider/box to set standby timeout (300–7200s) |
 | **Button** | Reset Machine | `button.<machine>_reset` | Sends soft restart command |
 | **Button** | Check Firmware Updates | `button.<machine>_check_updates` | Queries cloud for new firmware updates |
+| **Button** | Refill Water Tank | `button.<machine>_refill_water_tank` | Resets reservoir water level to full capacity |
+
+---
+
+## Custom Lovelace Card
+
+The integration bundles a custom Lovelace card (`morning-coffee-card`) that automatically loads without manual resource registration.
+
+```yaml
+type: custom:morning-coffee-card
+entity: sensor.dagusmorning_status
+name: Kitchen Morning Machine  # Optional custom title
+show_water_gauge: true        # Show animated water tank bar
+show_diagnostics: true        # Show total brews, limescale, child lock
+```
 
 ---
 

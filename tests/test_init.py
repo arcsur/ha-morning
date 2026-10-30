@@ -67,6 +67,24 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
         await async_reload_entry(self.hass, self.entry)
         self.hass.config_entries.async_reload.assert_called_once_with(self.entry.entry_id)
 
+    async def test_register_frontend(self):
+        """Test custom card static path and extra js url registration."""
+        from custom_components.morning import _async_register_frontend
+
+        self.hass.http = MagicMock()
+        self.hass.http.async_register_static_paths = AsyncMock()
+        self.hass.data = {}
+
+        with patch("homeassistant.components.frontend.add_extra_js_url") as mock_add_js:
+            await _async_register_frontend(self.hass)
+            self.assertTrue(self.hass.data.get("morning_frontend_registered"))
+            self.hass.http.async_register_static_paths.assert_called_once()
+            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js")
+
+            # Second call should be a no-op due to idempotency guard
+            await _async_register_frontend(self.hass)
+            self.assertEqual(self.hass.http.async_register_static_paths.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
