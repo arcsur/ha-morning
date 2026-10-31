@@ -1,5 +1,6 @@
 """Unit tests for Morning sensor platform."""
 
+import dataclasses
 import unittest
 from unittest.mock import MagicMock
 
@@ -54,6 +55,24 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
     def test_status_sensor_attributes(self):
         """Test status sensor value and extended diagnostic attributes."""
         sensor = MorningStatusSensor(self.coordinator, "M_123")
+        self.assertEqual(sensor.native_value, "ready")
+
+        # Status override when brew is finished but shadow still reports BREWING (capsule prompt active)
+        self.coordinator.data["M_123"] = dataclasses.replace(self.machine, status="BREWING")
+        self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(
+            stage="done",
+            is_brewing=False,
+            water_output=50.0,
+        )
+        self.assertEqual(sensor.native_value, "done")
+        self.assertEqual(sensor.icon, "mdi:check-circle-outline")
+
+        # Reset back to ready
+        self.coordinator.data["M_123"] = dataclasses.replace(self.machine, status="READY")
+        self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(
+            stage="idle",
+            is_brewing=False,
+        )
         self.assertEqual(sensor.native_value, "ready")
 
         attrs = sensor.extra_state_attributes

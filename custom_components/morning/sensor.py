@@ -111,6 +111,12 @@ class MorningStatusSensor(MorningEntity, SensorEntity):
         """Return the current machine status."""
         if not self.machine:
             return None
+        telem = self.coordinator.live_telemetry.get(self._machine_id)
+        if telem and telem.stage == "done" and not telem.is_brewing:
+            # If brew completed but machine shadow still reports 'brewing'
+            # (e.g. waiting for capsule release or prompt dismissal), report 'done'
+            if self.machine.status.lower() == "brewing":
+                return "done"
         return self.machine.status.lower()
 
     @property
@@ -118,7 +124,9 @@ class MorningStatusSensor(MorningEntity, SensorEntity):
         """Return dynamic icon depending on machine state."""
         if not self.machine:
             return "mdi:coffee-maker-outline"
-        status = self.machine.status.upper()
+        status = (self.native_value or self.machine.status or "").upper()
+        if status == "DONE":
+            return "mdi:check-circle-outline"
         return STATUS_ICON_MAP.get(status, "mdi:coffee-maker-outline")
 
     @property

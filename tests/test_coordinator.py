@@ -278,6 +278,62 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
         self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 30.0)
 
+    async def test_fallback_brew_and_flow_meter_reconciliation(self):
+        """Test fallback brew deduction and subsequent flow meter reconciliation."""
+        self.coordinator.set_estimated_water_level("M_123", 800.0)
+        self.coordinator._previous_brew_counts["M_123"] = 10
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+        self.coordinator._previous_total_water["M_123"] = 1000
+        self.coordinator._previous_statuses["M_123"] = "READY"
+
+        # Poll 1: machine starts brewing
+        m_brewing = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 10,
+            "status": "BREWING",
+            "brew": {"count": 10, "ml": 1000},
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_brewing])
+        await self.coordinator._async_update_data()
+
+        # Fallback 50ml assumed immediately: 800 - 50 = 750ml
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 750.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "brewing")
+        self.assertTrue(self.coordinator.live_telemetry["M_123"].is_brewing)
+
+        # Poll 2: brew completes (brewCount increments, but status still BREWING while prompt active)
+        m_done_prompt = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 11,
+            "status": "BREWING",
+            "brew": {"count": 11, "ml": 1000},
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_done_prompt])
+        await self.coordinator._async_update_data()
+
+        # No double deduction! Level stays 750ml, stage is done
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 750.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
+        self.assertFalse(self.coordinator.live_telemetry["M_123"].is_brewing)
+
+        # Poll 3: flow meter updates with true dispensed volume (1068 ml -> 68 ml dispensed)
+        m_flow_update = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 11,
+            "status": "READY",
+            "brew": {"count": 11, "ml": 1068},
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_flow_update])
+        await self.coordinator._async_update_data()
+
+        # Reconciles: 750 + (50 assumed - 68 actual) = 732 ml
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 732.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 68.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
+
 
 if __name__ == "__main__":
     unittest.main()

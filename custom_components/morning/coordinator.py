@@ -65,6 +65,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self._previous_statuses: dict[str, str] = {}
         self._previous_total_water: dict[str, int] = {}
         self._pending_live_brew_accounted: dict[str, bool] = {}
+        self._unreconciled_brew_volume: dict[str, float] = {}
+        self._active_polling_brew: dict[str, bool] = {}
 
     def get_tank_capacity(self, machine_id: str | None = None) -> int:
         """Return configured tank capacity in ml."""
@@ -240,49 +242,116 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     self.water_tank_levels[mid] = capacity
                     self.pre_brew_tank_levels[mid] = capacity
 
+                prev_status = self._previous_statuses.get(mid)
+                curr_status = machine.status.upper()
+                live_active = bool(
+                    self.live_telemetry.get(mid) and self.live_telemetry[mid].is_brewing
+                )
+
+                # Polling fallback: detect active brewing start if live stream not connected
+                if (
+                    curr_status == "BREWING"
+                    and prev_status != "BREWING"
+                    and not live_active
+                    and not self._active_polling_brew.get(mid, False)
+                ):
+                    self._active_polling_brew[mid] = True
+                    assumed = fallback_vol
+                    self._unreconciled_brew_volume[mid] = (
+                        self._unreconciled_brew_volume.get(mid, 0.0) + assumed
+                    )
+                    self.water_tank_levels[mid] = max(
+                        0.0, self.get_estimated_water_level(mid) - assumed
+                    )
+                    self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                        stage="brewing",
+                        water_output=assumed,
+                        is_brewing=True,
+                        last_updated=time.time(),
+                    )
+                    _LOGGER.debug(
+                        "Brew started on %s via polling; deducted fallback %.1f ml",
+                        mid,
+                        assumed,
+                    )
+
                 # Polling fallback: decrement volume if brew count incremented without live stream
                 prev_brew_count = self._previous_brew_counts.get(mid)
                 brew_count_incremented = (
                     prev_brew_count is not None and machine.brew_count > prev_brew_count
                 )
+                live_accounted = self._pending_live_brew_accounted.pop(mid, False)
+
                 if brew_count_incremented:
                     delta = machine.brew_count - prev_brew_count
-                    if self._pending_live_brew_accounted.pop(mid, False):
+                    if live_accounted:
                         _LOGGER.debug(
                             "Brew count increment on %s already accounted for by live IoT stream",
                             mid,
                         )
+                        self._active_polling_brew.pop(mid, None)
+                        self._unreconciled_brew_volume.pop(mid, None)
                     else:
-                        decrement = delta * fallback_vol
-                        _LOGGER.debug(
-                            "Brew count incremented by %d on %s without live stream; decrementing %.1f ml",
-                            delta,
-                            mid,
-                            decrement,
-                        )
-                        self.water_tank_levels[mid] = max(
-                            0.0, self.get_estimated_water_level(mid) - decrement
-                        )
-                        # Set sticky telemetry so brew sensors reflect the completed brew
+                        if self._active_polling_brew.pop(mid, False):
+                            # Already deducted assumed volume on BREWING status transition
+                            assumed = self._unreconciled_brew_volume.get(mid, fallback_vol)
+                        else:
+                            # Missed BREWING status, deduct assumed volume now
+                            assumed = delta * fallback_vol
+                            self._unreconciled_brew_volume[mid] = (
+                                self._unreconciled_brew_volume.get(mid, 0.0) + assumed
+                            )
+                            self.water_tank_levels[mid] = max(
+                                0.0, self.get_estimated_water_level(mid) - assumed
+                            )
+                            _LOGGER.debug(
+                                "Brew count incremented by %d on %s without live stream; assumed %.1f ml",
+                                delta,
+                                mid,
+                                assumed,
+                            )
+
+                        # Set sticky telemetry to 'done'
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
-                            water_output=decrement,
+                            water_output=assumed,
                             is_brewing=False,
                             last_updated=time.time(),
                         )
 
                 # Flow meter delta reconciliation (total_water_ml)
                 prev_total_water = self._previous_total_water.get(mid)
-                prev_status = self._previous_statuses.get(mid)
-                curr_status = machine.status.upper()
 
                 if prev_total_water is not None and machine.total_water_ml > prev_total_water:
                     water_delta = float(machine.total_water_ml - prev_total_water)
-                    if self._pending_live_brew_accounted.pop(mid, False):
+                    unreconciled = self._unreconciled_brew_volume.pop(mid, 0.0)
+
+                    if live_accounted or (
+                        (prev_telem := self.live_telemetry.get(mid)) and prev_telem.is_brewing
+                    ):
                         _LOGGER.debug(
-                            "Total water increment of %.1f ml on %s already accounted for by live IoT stream",
+                            "Total water increment of %.1f ml on %s correlated with live brew",
                             water_delta,
                             mid,
+                        )
+                    elif unreconciled > 0:
+                        # Reconcile assumed fallback volume with actual dispensed water from flow meter
+                        correction = unreconciled - water_delta
+                        self.water_tank_levels[mid] = max(
+                            0.0, min(capacity, self.water_tank_levels[mid] + correction)
+                        )
+                        self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                            stage="done",
+                            water_output=water_delta,
+                            is_brewing=False,
+                            last_updated=time.time(),
+                        )
+                        _LOGGER.info(
+                            "Reconciled fallback brew volume on %s: assumed %.1f ml -> actual %.1f ml (tank level: %.1f ml)",
+                            mid,
+                            unreconciled,
+                            water_delta,
+                            self.water_tank_levels[mid],
                         )
                     elif brew_count_incremented:
                         _LOGGER.debug(
@@ -322,6 +391,9 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         is_brewing=False,
                         last_updated=time.time(),
                     )
+
+                if curr_status != "BREWING":
+                    self._active_polling_brew.pop(mid, None)
 
                 self._previous_water_levels[mid] = curr_level_status
                 self._previous_brew_counts[mid] = machine.brew_count

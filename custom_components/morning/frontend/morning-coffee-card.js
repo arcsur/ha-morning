@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.0";
+const CARD_VERSION = "1.3.3";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -17,6 +17,7 @@ const STATUS_COLORS = {
   maintenance: "#e67e22",
   fault: "#c0392b",
   power_off: "#7f8c8d",
+  done: "#2ecc71",
 };
 
 const AVAILABLE_STATUS_ITEMS = [
@@ -568,14 +569,15 @@ class MorningCoffeeCard extends HTMLElement {
     const waterLevelMl = parseFloat(this._getValue("water_level", "850"));
     const waterLevelPct = parseFloat(this._getValue("water_pct", "100"));
     const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
-    const isBrewing = rawStatus === "brewing" || (stage !== "idle" && stage !== "done");
+    const displayStatus = (rawStatus === "brewing" && stage === "done") ? "done" : rawStatus;
+    const isBrewing = (rawStatus === "brewing" && stage !== "done") || (stage !== "idle" && stage !== "done");
 
     const waterDispensed = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
     const massDispensed = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
     const brewTemp = this._getValue("brew_temp", "--");
     const bloomDuration = this._getValue("brew_bloom", "0");
 
-    const statusColor = STATUS_COLORS[rawStatus] || "#888";
+    const statusColor = STATUS_COLORS[displayStatus] || "#888";
     const statusBg = `${statusColor}22`;
 
     let currentStepIndex = STAGE_ORDER.indexOf(stage);
@@ -603,7 +605,7 @@ class MorningCoffeeCard extends HTMLElement {
           </div>
           <div class="header-badges">
             <span class="badge status" style="color: ${statusColor}; background: ${statusBg};">
-              ${rawStatus}
+              ${displayStatus}
             </span>
             <span class="badge ${isOnline ? "online" : "offline"}">
               ${isOnline ? "Online" : "Offline"}
