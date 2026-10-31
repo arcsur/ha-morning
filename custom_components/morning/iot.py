@@ -464,7 +464,31 @@ class MorningIotListener:
 
                     # Send MQTT CONNECT
                     cid = f"ha_morning_{identity_id.split(':')[-1][:8]}"
+                    _LOGGER.debug("Sending MQTT CONNECT packet with cid=%s", cid)
                     await ws.send_bytes(encode_mqtt_connect(cid))
+
+                    # Await CONNACK
+                    connack_msg = await ws.receive()
+                    if connack_msg.type != aiohttp.WSMsgType.BINARY:
+                        _LOGGER.warning(
+                            "MQTT CONNECT failed; unexpected message type: %s (code=%s, extra=%s)",
+                            connack_msg.type,
+                            ws.close_code,
+                            connack_msg.extra,
+                        )
+                        break
+
+                    connack_data = connack_msg.data
+                    if len(connack_data) < 4 or connack_data[0] != 0x20:
+                        _LOGGER.warning("MQTT invalid CONNACK packet: %s", list(connack_data))
+                        break
+
+                    connack_rc = connack_data[3]
+                    if connack_rc != 0:
+                        _LOGGER.warning("MQTT broker rejected connection: return_code=%d", connack_rc)
+                        break
+
+                    _LOGGER.info("MQTT session accepted by broker (CONNACK return_code=0)")
 
                     # Subscribe to topics
                     sub_topics = [
@@ -472,6 +496,7 @@ class MorningIotListener:
                         f"PROD/user/{identity_id}/+/status",
                     ]
                     for pid, top in enumerate(sub_topics, start=1):
+                        _LOGGER.debug("Subscribing to MQTT topic: %s", top)
                         await ws.send_bytes(encode_mqtt_subscribe(top, packet_id=pid))
 
                     last_ping = time.time()
@@ -501,7 +526,17 @@ class MorningIotListener:
                                     _LOGGER.debug("Error parsing IoT brew telemetry: %s", err)
 
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED):
+                            _LOGGER.warning(
+                                "Morning IoT WebSocket closed by server: code=%s, extra=%s",
+                                ws.close_code,
+                                msg.extra,
+                            )
                             break
+
+                # Sleep before reconnecting if WebSocket closed
+                if self._running:
+                    await asyncio.sleep(backoff)
+                    backoff = min(60, backoff * 2)
 
             except asyncio.CancelledError:
                 break
