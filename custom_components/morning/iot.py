@@ -228,18 +228,22 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
     if isinstance(data, dict):
         progress = data.get("progress")
         if isinstance(progress, dict):
-            water_output = float(progress.get("waterOutput") or progress.get("water_output") or 0.0)
-            mass_output = float(progress.get("massOutput") or progress.get("mass_output") or 0.0)
+            raw_water = float(progress.get("waterOutput") or progress.get("water_output") or 0.0)
+            raw_mass = float(progress.get("massOutput") or progress.get("mass_output") or 0.0)
             temperature = int(progress.get("temperature") or 0)
             stage_str = str(progress.get("status") or "brewing").lower()
             bloom_lapse = int(progress.get("bloomLapse") or 0)
             is_brewing = stage_str not in ("done", "cancel", "cancelled", "error", "water_low", "idle")
 
+            # Morning Machine: waterOutput is bypass water, massOutput is extracted espresso.
+            # Total water drawn from the reservoir is bypass water + extraction mass.
+            water_dispensed = (raw_water + raw_mass) if (raw_water > 0 or raw_mass > 0) else 0.0
+
             return MorningLiveBrewTelemetry(
                 stage=stage_str,
                 temperature=temperature,
-                water_output=water_output,
-                mass_output=mass_output,
+                water_output=water_dispensed,
+                mass_output=raw_mass,
                 bloom_lapse=bloom_lapse,
                 is_brewing=is_brewing,
                 last_updated=time.time(),
@@ -274,16 +278,9 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
                     is_brewing=True,
                     last_updated=time.time(),
                 )
-            if status_val in ("ready", "idle", "eco", "done"):
-                return MorningLiveBrewTelemetry(
-                    stage=status_val,
-                    temperature=0,
-                    water_output=0.0,
-                    mass_output=0.0,
-                    bloom_lapse=0,
-                    is_brewing=False,
-                    last_updated=time.time(),
-                )
+            # Do not return zeroed telemetry for ready/idle/eco/done:
+            # Prevents shadow updates from erasing sticky telemetry post-brew
+            return None
 
     # Check top-level status
     status_val = str(payload_dict.get("status") or "").lower()

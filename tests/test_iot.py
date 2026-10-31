@@ -108,10 +108,29 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(telem)
         self.assertTrue(telem.is_brewing)
         self.assertEqual(telem.stage, "brewing")
-        self.assertEqual(telem.water_output, 55.4)
+        # Total water = bypass (55.4) + mass (54.1) = 109.5 ml
+        self.assertAlmostEqual(telem.water_output, 109.5, places=1)
         self.assertEqual(telem.mass_output, 54.1)
         self.assertEqual(telem.temperature, 94)
         self.assertEqual(telem.bloom_lapse, 12)
+
+        # Espresso test: waterOutput is 0.0, massOutput is 36.5
+        espresso_packet = {
+            "name": "BrewCoffee.Response",
+            "data": {
+                "progress": {
+                    "status": "BREWING",
+                    "waterOutput": 0.0,
+                    "massOutput": 36.5,
+                    "temperature": 92,
+                    "bloomLapse": 0,
+                }
+            },
+        }
+        esp_telem = decode_brew_progress_payload(espresso_packet)
+        self.assertIsNotNone(esp_telem)
+        self.assertEqual(esp_telem.water_output, 36.5)
+        self.assertEqual(esp_telem.mass_output, 36.5)
 
         # Done brewing packet
         done_packet = {
@@ -130,7 +149,7 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(done_telem)
         self.assertFalse(done_telem.is_brewing)
         self.assertEqual(done_telem.stage, "done")
-        self.assertEqual(done_telem.water_output, 150.0)
+        self.assertAlmostEqual(done_telem.water_output, 297.8, places=1)
 
     def test_resolve_machine_id(self):
         """Test resolving machine ID by UUID or fallback."""

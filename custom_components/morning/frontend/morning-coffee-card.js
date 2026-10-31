@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.3";
+const CARD_VERSION = "1.3.4";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -43,12 +43,15 @@ class MorningCoffeeCard extends HTMLElement {
   }
 
   static getStubConfig(hass, entities) {
-    const statusEntity = entities.find(
-      (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning_status"))
+    const entityList = Array.isArray(entities)
+      ? entities
+      : (hass && hass.states ? Object.keys(hass.states) : []);
+    const statusEntity = entityList.find(
+      (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning"))
     );
     return {
       type: "custom:morning-coffee-card",
-      entity: statusEntity || "",
+      entity: statusEntity || "sensor.dagusmorning_status",
       show_header: true,
       show_brew_section: true,
       show_water_gauge: true,
@@ -57,13 +60,13 @@ class MorningCoffeeCard extends HTMLElement {
     };
   }
 
-  static async getConfigElement() {
+  static getConfigElement() {
     return document.createElement("morning-coffee-card-editor");
   }
 
   setConfig(config) {
-    if (!config.entity) {
-      throw new Error("Please define an entity (e.g. sensor.dagusmorning_status)");
+    if (!config) {
+      throw new Error("Invalid configuration");
     }
     this._config = {
       name: null,
@@ -80,9 +83,9 @@ class MorningCoffeeCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._config || !this._config.entity) return;
+    if (!this._config) return;
 
-    if (Object.keys(this._resolvedEntities).length === 0) {
+    if (this._config.entity && Object.keys(this._resolvedEntities).length === 0) {
       this._resolveEntities();
     }
 
@@ -554,6 +557,17 @@ class MorningCoffeeCard extends HTMLElement {
     const root = this.shadowRoot.getElementById("card-root");
     if (!root) return;
 
+    if (!this._config.entity) {
+      root.innerHTML = `
+        <div style="padding: 24px 16px; text-align: center; color: var(--secondary-text-color, #888);">
+          <ha-icon icon="mdi:coffee-maker-outline" style="--mdc-icon-size: 36px; margin-bottom: 8px; display: inline-block; color: var(--primary-color, #e67e22);"></ha-icon>
+          <div style="font-weight: 600; font-size: 0.95rem; color: var(--primary-text-color, #fff);">Morning Coffee Machine Card</div>
+          <div style="font-size: 0.8rem; margin-top: 4px;">Please select an entity in the card editor.</div>
+        </div>
+      `;
+      return;
+    }
+
     const statusState = this._getState("status");
     if (!statusState) {
       root.innerHTML = `<div style="padding: 16px; text-align: center; color: #888;">Entity unavailable</div>`;
@@ -561,19 +575,23 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     const machineName =
-      this._config.name || statusState.attributes.friendly_name || "Morning Coffee Machine";
+      this._config.name || statusState.attributes?.friendly_name || "Morning Coffee Machine";
     const rawStatus = (statusState.state || "unknown").toLowerCase();
     const isOnline = this._getValue("connectivity", "on") === "on";
 
     // Telemetry values
-    const waterLevelMl = parseFloat(this._getValue("water_level", "850"));
-    const waterLevelPct = parseFloat(this._getValue("water_pct", "100"));
+    const rawWaterMl = parseFloat(this._getValue("water_level", "850"));
+    const waterLevelMl = Number.isFinite(rawWaterMl) ? rawWaterMl : 850;
+    const rawWaterPct = parseFloat(this._getValue("water_pct", "100"));
+    const waterLevelPct = Number.isFinite(rawWaterPct) ? rawWaterPct : 100;
     const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
     const displayStatus = (rawStatus === "brewing" && stage === "done") ? "done" : rawStatus;
     const isBrewing = (rawStatus === "brewing" && stage !== "done") || (stage !== "idle" && stage !== "done");
 
-    const waterDispensed = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
-    const massDispensed = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
+    const rawWaterDisp = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
+    const waterDispensed = Number.isFinite(rawWaterDisp) ? rawWaterDisp : 0.0;
+    const rawMassDisp = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
+    const massDispensed = Number.isFinite(rawMassDisp) ? rawMassDisp : 0.0;
     const brewTemp = this._getValue("brew_temp", "--");
     const bloomDuration = this._getValue("brew_bloom", "0");
 

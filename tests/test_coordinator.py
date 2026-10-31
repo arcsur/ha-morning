@@ -334,6 +334,55 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 68.0)
         self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
 
+    async def test_live_espresso_brew_sticky_telemetry_and_lifetime_water(self):
+        """Test live espresso brew updates dispensed water, preserves telemetry, and increments lifetime water."""
+        self.coordinator.set_estimated_water_level("M_123", 850.0)
+        self.coordinator.set_lifetime_water_ml("M_123", 1000.0)
+
+        # 1. Active espresso brew (bypass 0, mass 36.5)
+        t_active = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=36.5,
+            mass_output=36.5,
+            temperature=92,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t_active)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 813.5)
+
+        # 2. Brew completes
+        t_done = MorningLiveBrewTelemetry(
+            stage="done",
+            is_brewing=False,
+            water_output=36.5,
+            mass_output=36.5,
+            temperature=92,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t_done)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 813.5)
+        self.assertEqual(self.coordinator.get_lifetime_water_ml("M_123"), 1036.5)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 36.5)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].mass_output, 36.5)
+
+        # 3. REST polling runs and sees brew_count incremented
+        self.coordinator._previous_brew_counts["M_123"] = 100
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+        m_poll = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 101,
+            "status": "ECO",
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_poll])
+        await self.coordinator._async_update_data()
+
+        # Telemetry should NOT be overwritten by fallback 50.0 ml
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 36.5)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].mass_output, 36.5)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 813.5)
+        self.assertEqual(self.coordinator.get_lifetime_water_ml("M_123"), 1036.5)
+
 
 if __name__ == "__main__":
     unittest.main()

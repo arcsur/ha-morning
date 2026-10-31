@@ -31,9 +31,21 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
         self.coordinator.data = {}
         self.coordinator.water_tank_levels = {}
         self.coordinator.live_telemetry = {}
+        self.coordinator.lifetime_water_levels = {}
         self.coordinator.get_tank_capacity.return_value = 850
         self.coordinator.get_estimated_water_level.side_effect = (
             lambda mid: self.coordinator.water_tank_levels.get(mid, 850.0)
+        )
+        self.coordinator.get_lifetime_water_ml.side_effect = (
+            lambda mid: self.coordinator.lifetime_water_levels.get(mid, 0.0)
+        )
+        self.coordinator.set_lifetime_water_ml.side_effect = (
+            lambda mid, v: self.coordinator.lifetime_water_levels.__setitem__(mid, float(v))
+        )
+        self.coordinator.add_lifetime_water_ml.side_effect = (
+            lambda mid, v: self.coordinator.lifetime_water_levels.__setitem__(
+                mid, self.coordinator.lifetime_water_levels.get(mid, 0.0) + float(v)
+            )
         )
 
         self.machine = MorningMachine.from_dict({

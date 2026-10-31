@@ -142,7 +142,10 @@ class MorningStatusSensor(MorningEntity, SensorEntity):
             "active": self.machine.active,
             "recipe_slots": self.machine.recipe_slots,
             "child_lock": self.machine.child_lock,
-            "total_water_ml": self.machine.total_water_ml,
+            "total_water_ml": (
+                self.coordinator.get_lifetime_water_ml(self._machine_id)
+                or self.machine.total_water_ml
+            ),
             "stm32_version": self.machine.stm32_version,
             "fault_information": self.machine.fault_information,
             "pump_flow_rate_k1": self.machine.pump_flow_rate_k1,
@@ -508,7 +511,7 @@ class MorningBrewBloomSensor(MorningEntity, SensorEntity):
         return 0
 
 
-class MorningLifetimeWaterSensor(MorningEntity, SensorEntity):
+class MorningLifetimeWaterSensor(MorningEntity, RestoreSensor):
     """Sensor tracking cumulative lifetime water consumed by machine."""
 
     def __init__(
@@ -529,12 +532,27 @@ class MorningLifetimeWaterSensor(MorningEntity, SensorEntity):
         )
         self._attr_unique_id = f"{machine_id}_lifetime_water_used"
 
+    async def async_added_to_hass(self) -> None:
+        """Restore previous cumulative water consumption on startup."""
+        await super().async_added_to_hass()
+        if self._machine_id not in self.coordinator.lifetime_water_levels:
+            last_sensor_data = await self.async_get_last_sensor_data()
+            if last_sensor_data and last_sensor_data.native_value is not None:
+                try:
+                    restored_liters = float(last_sensor_data.native_value)
+                    self.coordinator.set_lifetime_water_ml(
+                        self._machine_id, restored_liters * 1000.0
+                    )
+                except (ValueError, TypeError):
+                    pass
+
     @property
     def native_value(self) -> float | None:
         """Return cumulative liters pumped."""
-        if not self.machine:
-            return None
-        return round(self.machine.total_water_ml / 1000.0, 2)
+        ml = self.coordinator.get_lifetime_water_ml(self._machine_id)
+        if ml == 0.0 and self.machine and self.machine.total_water_ml > 0:
+            return round(self.machine.total_water_ml / 1000.0, 2)
+        return round(ml / 1000.0, 2)
 
 
 class MorningSlaveFirmwareSensor(MorningEntity, SensorEntity):
