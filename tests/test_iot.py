@@ -43,6 +43,9 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         self.assertIn("X-Amz-Date=20261030T120000Z", url)
         self.assertIn("X-Amz-Signature=", url)
         self.assertIn("X-Amz-Security-Token=EXAMPLESECURITYTOKEN", url)
+        sig_idx = url.index("X-Amz-Signature=")
+        token_idx = url.index("X-Amz-Security-Token=")
+        self.assertGreater(token_idx, sig_idx)
 
     def test_sign_sigv4_headers(self):
         """Test SigV4 headers generation for REST endpoints."""

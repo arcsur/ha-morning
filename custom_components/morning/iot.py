@@ -49,7 +49,7 @@ def sign_iot_websocket_url(
     endpoint: str,
     region: str,
     credentials: dict[str, str],
-    expires: int = 86400,
+    expires: int = 300,
     timestamp: datetime | None = None,
 ) -> str:
     """Generate a presigned AWS IoT MQTT WebSocket URL using AWS SigV4."""
@@ -71,8 +71,6 @@ def sign_iot_websocket_url(
         "X-Amz-Expires": str(expires),
         "X-Amz-SignedHeaders": "host",
     }
-    if session_token:
-        query_params["X-Amz-Security-Token"] = session_token
 
     canonical_querystring = urllib.parse.urlencode(sorted(query_params.items()))
     canonical_headers = f"host:{endpoint}\n"
@@ -90,7 +88,10 @@ def sign_iot_websocket_url(
     signing_key = _get_signature_key(secret_key, date_stamp, region, service)
     signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
-    return f"wss://{endpoint}/mqtt?{canonical_querystring}&X-Amz-Signature={signature}"
+    url = f"wss://{endpoint}/mqtt?{canonical_querystring}&X-Amz-Signature={signature}"
+    if session_token:
+        url += f"&X-Amz-Security-Token={urllib.parse.quote(session_token)}"
+    return url
 
 
 def sign_sigv4_headers(
@@ -378,9 +379,9 @@ class MorningIotListener:
                 identity_endpoint, json=body_get_id, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status != 200:
-                    _LOGGER.debug("Cognito GetId returned HTTP %s", resp.status)
+                    _LOGGER.warning("Cognito GetId returned HTTP %s", resp.status)
                     return None
-                data = await resp.json()
+                data = await resp.json(content_type=None)
                 identity_id = data.get("IdentityId")
 
             if not identity_id:
@@ -396,9 +397,9 @@ class MorningIotListener:
                 identity_endpoint, json=body_creds, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status != 200:
-                    _LOGGER.debug("Cognito GetCredentials returned HTTP %s", resp.status)
+                    _LOGGER.warning("Cognito GetCredentials returned HTTP %s", resp.status)
                     return None
-                creds_data = await resp.json()
+                creds_data = await resp.json(content_type=None)
                 credentials = creds_data.get("Credentials")
                 if not credentials:
                     return None
@@ -408,16 +409,17 @@ class MorningIotListener:
                 return identity_id, credentials
 
         except Exception as err:
-            _LOGGER.debug("Failed retrieving AWS Cognito credentials for IoT: %s", err)
+            _LOGGER.warning("Failed retrieving AWS Cognito credentials for IoT: %s", err)
             return None
 
     async def _attach_policy(self, identity_id: str, credentials: dict[str, str]) -> None:
         """Attach AWS IoT user policy to identity principal."""
+        iot_host = f"iot.{AWS_IOT_REGION}.amazonaws.com"
         path = f"/principal-policies/{AWS_IOT_POLICY_NAME}"
-        url = f"https://{AWS_IOT_ENDPOINT}{path}"
+        url = f"https://{iot_host}{path}"
         headers = sign_sigv4_headers(
             method="PUT",
-            host=AWS_IOT_ENDPOINT,
+            host=iot_host,
             path=path,
             region=AWS_IOT_REGION,
             service="iot",
@@ -430,7 +432,7 @@ class MorningIotListener:
             ) as resp:
                 _LOGGER.debug("AttachPrincipalPolicy result: HTTP %s", resp.status)
         except Exception as err:
-            _LOGGER.debug("AttachPrincipalPolicy error: %s", err)
+            _LOGGER.warning("AttachPrincipalPolicy error: %s", err)
 
     async def _run_loop(self) -> None:
         """Main connection and packet dispatching loop with backoff."""
@@ -466,8 +468,8 @@ class MorningIotListener:
 
                     # Subscribe to topics
                     sub_topics = [
-                        f"+/user/{identity_id}/+/response",
-                        f"+/user/{identity_id}/+/status",
+                        f"PROD/user/{identity_id}/+/response",
+                        f"PROD/user/{identity_id}/+/status",
                     ]
                     for pid, top in enumerate(sub_topics, start=1):
                         await ws.send_bytes(encode_mqtt_subscribe(top, packet_id=pid))
@@ -504,6 +506,6 @@ class MorningIotListener:
             except asyncio.CancelledError:
                 break
             except Exception as err:
-                _LOGGER.debug("Morning IoT live stream error: %s (retrying in %ds)", err, backoff)
+                _LOGGER.warning("Morning IoT live stream error: %s (retrying in %ds)", err, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(60, backoff * 2)

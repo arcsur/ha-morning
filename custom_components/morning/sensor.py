@@ -348,7 +348,6 @@ class MorningBrewWaterDispensedSensor(MorningEntity, RestoreSensor):
             name="Brew Water Dispensed",
             has_entity_name=True,
             icon="mdi:water-pump",
-            device_class=SensorDeviceClass.VOLUME,
             state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfVolume.MILLILITERS,
         )
