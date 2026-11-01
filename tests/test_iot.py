@@ -151,6 +151,26 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done_telem.stage, "done")
         self.assertAlmostEqual(done_telem.water_output, 297.8, places=1)
 
+        # Shadow ready packet
+        ready_packet = {
+            "state": {
+                "reported": {
+                    "status": "ready"
+                }
+            }
+        }
+        ready_telem = decode_brew_progress_payload(ready_packet)
+        self.assertIsNotNone(ready_telem)
+        self.assertFalse(ready_telem.is_brewing)
+        self.assertEqual(ready_telem.stage, "ready")
+
+        # Top-level idle packet
+        idle_packet = {"status": "IDLE"}
+        idle_telem = decode_brew_progress_payload(idle_packet)
+        self.assertIsNotNone(idle_telem)
+        self.assertFalse(idle_telem.is_brewing)
+        self.assertEqual(idle_telem.stage, "idle")
+
     def test_resolve_machine_id(self):
         """Test resolving machine ID by UUID or fallback."""
         coordinator = MagicMock()

@@ -287,7 +287,7 @@ class MorningEstimatedWaterLevelSensor(MorningEntity, RestoreSensor):
     async def async_added_to_hass(self) -> None:
         """Restore state on startup if not already seeded."""
         await super().async_added_to_hass()
-        if self._machine_id not in self.coordinator.water_tank_levels:
+        if not self.coordinator._water_level_seeded.get(self._machine_id, False):
             last_sensor_data = await self.async_get_last_sensor_data()
             if last_sensor_data and last_sensor_data.native_value is not None:
                 try:

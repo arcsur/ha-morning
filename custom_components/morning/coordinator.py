@@ -61,6 +61,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self.pre_brew_tank_levels: dict[str, float] = {}
         self.live_telemetry: dict[str, MorningLiveBrewTelemetry] = {}
         self.lifetime_water_levels: dict[str, float] = {}
+        self._water_level_seeded: dict[str, bool] = {}
         self._previous_brew_counts: dict[str, int] = {}
         self._previous_water_levels: dict[str, str] = {}
         self._previous_statuses: dict[str, str] = {}
@@ -114,6 +115,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         clamped = max(0.0, min(capacity, float(level)))
         self.water_tank_levels[machine_id] = clamped
         self.pre_brew_tank_levels[machine_id] = clamped
+        self._water_level_seeded[machine_id] = True
 
     def get_lifetime_water_ml(self, machine_id: str) -> float:
         """Return cumulative lifetime water pumped in ml."""
@@ -139,7 +141,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self.water_tank_levels[machine_id] = max(0.0, current - volume)
         self.pre_brew_tank_levels[machine_id] = self.water_tank_levels[machine_id]
         self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
-            stage="purge",
+            stage="done",
             water_output=volume,
             is_brewing=False,
             last_updated=time.time(),
@@ -177,6 +179,41 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         prev_telem = self.live_telemetry.get(machine_id)
         was_brewing = prev_telem.is_brewing if prev_telem else False
 
+        # Ignore passive shadow reports (ready/idle/eco) unless actively finishing a brew/purge
+        if not telem.is_brewing and telem.stage in ("ready", "idle", "eco"):
+            if not was_brewing:
+                return
+            # Machine was active and now returned to idle/ready/eco
+            if prev_telem and prev_telem.stage == "purge":
+                purge_vol = float(self.get_purge_volume(machine_id))
+                pre_brew = self.pre_brew_tank_levels.get(
+                    machine_id, self.get_estimated_water_level(machine_id)
+                )
+                self.water_tank_levels[machine_id] = max(0.0, pre_brew - purge_vol)
+                self.add_lifetime_water_ml(machine_id, purge_vol)
+                telem = MorningLiveBrewTelemetry(
+                    stage="done",
+                    water_output=purge_vol,
+                    is_brewing=False,
+                    last_updated=time.time(),
+                )
+            else:
+                telem = MorningLiveBrewTelemetry(
+                    stage="done",
+                    temperature=prev_telem.temperature if prev_telem else 0,
+                    water_output=prev_telem.water_output if prev_telem else 0.0,
+                    mass_output=prev_telem.mass_output if prev_telem else 0.0,
+                    bloom_lapse=prev_telem.bloom_lapse if prev_telem else 0,
+                    is_brewing=False,
+                    last_updated=time.time(),
+                )
+            self._pending_live_brew_accounted[machine_id] = True
+            self._last_live_brew_time[machine_id] = time.time()
+            self._last_live_brew_volume[machine_id] = telem.water_output
+            self.live_telemetry[machine_id] = telem
+            self.async_update_listeners()
+            return
+
         # When brewing starts, snapshot current water level as pre-brew baseline
         if not was_brewing and telem.is_brewing:
             self.pre_brew_tank_levels[machine_id] = self.get_estimated_water_level(machine_id)
@@ -204,7 +241,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                 self.water_tank_levels[machine_id] = max(0.0, pre_brew - purge_vol)
                 dispensed = purge_vol
                 telem = MorningLiveBrewTelemetry(
-                    stage="purge",
+                    stage="done",
                     water_output=purge_vol,
                     is_brewing=False,
                     last_updated=time.time(),
@@ -263,29 +300,76 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                 prev_level_status = self._previous_water_levels.get(mid)
                 curr_level_status = machine.water_level.upper()
 
-                # Physical capacitive sensor states
-                if curr_level_status == WATER_LEVEL_LOW:
-                    # Low water level sensor triggered -> clamp estimation to 0
-                    self.water_tank_levels[mid] = 0.0
-                    self.pre_brew_tank_levels[mid] = 0.0
-                elif (
-                    prev_level_status == WATER_LEVEL_LOW
-                    and curr_level_status == WATER_LEVEL_NORMAL
-                ):
-                    # Reservoir refilled and reseated -> reset to full capacity
-                    _LOGGER.info("Morning machine %s water tank refilled (LOW -> NORMAL)", mid)
-                    self.water_tank_levels[mid] = capacity
-                    self.pre_brew_tank_levels[mid] = capacity
-                elif mid not in self.water_tank_levels:
-                    # Initial seeding if not restored from prior state
-                    self.water_tank_levels[mid] = capacity
-                    self.pre_brew_tank_levels[mid] = capacity
-
                 prev_status = self._previous_statuses.get(mid)
                 curr_status = machine.status.upper()
                 live_active = bool(
                     self.live_telemetry.get(mid) and self.live_telemetry[mid].is_brewing
                 )
+                is_running = live_active or curr_status in ("BREWING", "PURGE")
+
+                # Restore previous value on startup before defaulting to full capacity
+                if mid not in self.water_tank_levels:
+                    restored = None
+                    if hasattr(self, "hass") and self.hass and hasattr(self.hass, "states"):
+                        try:
+                            from homeassistant.helpers import entity_registry as er
+
+                            ent_reg = er.async_get(self.hass)
+                            target_unique_id = f"{mid}_water_level_estimated"
+                            target_ent_id = ent_reg.async_get_entity_id(
+                                "sensor", DOMAIN, target_unique_id
+                            )
+                            if target_ent_id and isinstance(target_ent_id, str):
+                                state = self.hass.states.get(target_ent_id)
+                                if (
+                                    state
+                                    and isinstance(state.state, str)
+                                    and state.state not in ("unknown", "unavailable")
+                                ):
+                                    restored = float(state.state)
+                        except Exception:
+                            pass
+
+                        if restored is None and hasattr(self.hass.states, "async_all"):
+                            raw_states = self.hass.states.async_all("sensor")
+                            if isinstance(raw_states, list):
+                                for state in raw_states:
+                                    if (
+                                        isinstance(state.entity_id, str)
+                                        and state.entity_id.endswith("_water_tank_level")
+                                        and isinstance(state.state, str)
+                                        and state.state not in ("unknown", "unavailable")
+                                    ):
+                                        try:
+                                            restored = float(state.state)
+                                            break
+                                        except (ValueError, TypeError):
+                                            pass
+
+                    if restored is not None:
+                        self.water_tank_levels[mid] = max(0.0, min(capacity, restored))
+                        self._water_level_seeded[mid] = True
+                    else:
+                        if curr_level_status == WATER_LEVEL_LOW:
+                            self.water_tank_levels[mid] = 0.0
+                        else:
+                            self.water_tank_levels[mid] = capacity
+                    self.pre_brew_tank_levels[mid] = self.water_tank_levels[mid]
+
+                # Physical capacitive sensor states (guarded against pump vibration / liquid slosh)
+                if curr_level_status == WATER_LEVEL_LOW and not is_running:
+                    # Low water level sensor triggered while idle -> clamp estimation
+                    self.water_tank_levels[mid] = 0.0
+                    self.pre_brew_tank_levels[mid] = 0.0
+                elif (
+                    prev_level_status == WATER_LEVEL_LOW
+                    and curr_level_status == WATER_LEVEL_NORMAL
+                    and not is_running
+                ):
+                    # Reservoir refilled after being confirmed empty while machine is idle
+                    _LOGGER.info("Morning machine %s water tank refilled (LOW -> NORMAL)", mid)
+                    self.water_tank_levels[mid] = capacity
+                    self.pre_brew_tank_levels[mid] = capacity
 
                 # Polling fallback: detect active brewing start if live stream not connected
                 if (
@@ -413,7 +497,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             0.0, self.get_estimated_water_level(mid) - water_delta
                         )
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
-                            stage="purge",
+                            stage="done",
                             water_output=water_delta,
                             is_brewing=False,
                             last_updated=time.time(),
@@ -430,16 +514,18 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         0.0, self.get_estimated_water_level(mid) - purge_vol
                     )
                     self.live_telemetry[mid] = MorningLiveBrewTelemetry(
-                        stage="purge",
+                        stage="done",
                         water_output=purge_vol,
                         is_brewing=False,
                         last_updated=time.time(),
                     )
+                    self.add_lifetime_water_ml(mid, purge_vol)
 
                 if curr_status != "BREWING":
                     self._active_polling_brew.pop(mid, None)
 
-                self._previous_water_levels[mid] = curr_level_status
+                if not is_running or mid not in self._previous_water_levels:
+                    self._previous_water_levels[mid] = curr_level_status
                 self._previous_brew_counts[mid] = machine.brew_count
                 self._previous_statuses[mid] = curr_status
                 self._previous_total_water[mid] = machine.total_water_ml

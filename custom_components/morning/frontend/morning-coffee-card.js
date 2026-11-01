@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.4";
+const CARD_VERSION = "1.3.5";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -18,6 +18,7 @@ const STATUS_COLORS = {
   fault: "#c0392b",
   power_off: "#7f8c8d",
   done: "#2ecc71",
+  purge: "#e67e22",
 };
 
 const AVAILABLE_STATUS_ITEMS = [
@@ -466,6 +467,23 @@ class MorningCoffeeCard extends HTMLElement {
           text-overflow: ellipsis;
           white-space: nowrap;
         }
+        .clickable {
+          cursor: pointer;
+          user-select: none;
+        }
+        .diag-item.clickable:hover {
+          background: rgba(255, 255, 255, 0.08);
+          border-color: rgba(255, 255, 255, 0.16);
+          transform: translateY(-1px);
+        }
+        .metric-card.clickable:hover {
+          background: rgba(0, 0, 0, 0.35);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+          transform: translateY(-1px);
+        }
+        .reservoir-progress.clickable:hover {
+          opacity: 0.9;
+        }
       </style>
       <ha-card id="card-root">
       </ha-card>
@@ -493,23 +511,28 @@ class MorningCoffeeCard extends HTMLElement {
   }
 
   _renderDiagItem(id) {
+    const entityId = this._resolvedEntities[id];
+    const clickableClass = entityId ? " clickable" : "";
+    const dataAttr = entityId ? ` data-entity-id="${entityId}"` : "";
+    const titleAttr = entityId ? ' title="Click to view history graph"' : "";
+
     switch (id) {
       case "total_brews":
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Total Brews</span>
             <span class="diag-val">${this._getValue("total_brews", "--")}</span>
           </div>`;
       case "limescale":
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Limescale</span>
             <span class="diag-val">${this._getValue("limescale", "--")}</span>
           </div>`;
       case "child_lock": {
         const isLocked = this._getValue("child_lock", "off") === "on";
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Child Lock</span>
             <span class="diag-val" style="color: ${isLocked ? "#e67e22" : "inherit"};">${isLocked ? "Active" : "Off"}</span>
           </div>`;
@@ -517,34 +540,34 @@ class MorningCoffeeCard extends HTMLElement {
       case "standby": {
         const timeout = this._getValue("standby", "--");
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Standby</span>
             <span class="diag-val">${timeout !== "--" ? timeout + "s" : "--"}</span>
           </div>`;
       }
       case "firmware":
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Firmware</span>
             <span class="diag-val">${this._getValue("firmware", "--")}</span>
           </div>`;
       case "slave_firmware":
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Motor Controller</span>
             <span class="diag-val">${this._getValue("slave_firmware", "--")}</span>
           </div>`;
       case "lifetime_water": {
         const ltr = parseFloat(this._getValue("lifetime_water", "0.0") || "0.0");
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Lifetime Water</span>
             <span class="diag-val">${ltr.toFixed(1)} L</span>
           </div>`;
       }
       case "fault_code":
         return `
-          <div class="diag-item">
+          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
             <span class="diag-label">Fault Code</span>
             <span class="diag-val">${this._getValue("fault_code", "None")}</span>
           </div>`;
@@ -595,6 +618,20 @@ class MorningCoffeeCard extends HTMLElement {
     const brewTemp = this._getValue("brew_temp", "--");
     const bloomDuration = this._getValue("brew_bloom", "0");
 
+    const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
+    const isPurge = stage === "purge" || rawStatus === "purge";
+    const isBrewing = (rawStatus === "brewing" && stage !== "done")
+      || (rawStatus === "purge")
+      || (stage === "purge")
+      || (stage === "brewing" || stage === "heating" || stage === "blooming");
+    const displayStatus = (rawStatus === "brewing" && stage === "done")
+      ? "done"
+      : isPurge
+      ? (isBrewing ? "purge" : "done")
+      : rawStatus;
+
+    const isPurgeCycle = isPurge || (stage === "done" && brewTemp === "--" && massDispensed === 0 && waterDispensed > 0);
+
     const statusColor = STATUS_COLORS[displayStatus] || "#888";
     const statusBg = `${statusColor}22`;
 
@@ -604,6 +641,12 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     const heroClass = isBrewing ? "brew-hero brewing" : stage === "done" ? "brew-hero done" : "brew-hero";
+
+    const brewWaterEnt = this._resolvedEntities.brew_water;
+    const brewMassEnt = this._resolvedEntities.brew_mass;
+    const brewTempEnt = this._resolvedEntities.brew_temp;
+    const brewBloomEnt = this._resolvedEntities.brew_bloom;
+    const waterLevelEnt = this._resolvedEntities.water_level;
 
     let html = "";
 
@@ -636,8 +679,21 @@ class MorningCoffeeCard extends HTMLElement {
     // 2. Brewing / Extraction Progress Monitor
     const showBrewSection = this._config.show_brew_section !== false;
     if (showBrewSection) {
-      html += `
-        <div class="${heroClass}">
+      const stepperHtml = isPurgeCycle
+        ? `
+          <div class="stepper">
+            <div class="stepper-line"></div>
+            <div class="${isBrewing ? "step active" : "step passed"}">
+              <div class="step-circle">${!isBrewing ? "✓" : "1"}</div>
+              <div class="step-label">Purge</div>
+            </div>
+            <div class="${!isBrewing && stage === "done" ? "step passed" : "step"}">
+              <div class="step-circle">${!isBrewing && stage === "done" ? "✓" : "2"}</div>
+              <div class="step-label">Done</div>
+            </div>
+          </div>
+        `
+        : `
           <div class="stepper">
             <div class="stepper-line"></div>
             ${STAGE_ORDER.map((stepName, idx) => {
@@ -652,9 +708,14 @@ class MorningCoffeeCard extends HTMLElement {
               `;
             }).join("")}
           </div>
+        `;
+
+      html += `
+        <div class="${heroClass}">
+          ${stepperHtml}
 
           <div class="telemetry-grid">
-            <div class="metric-card">
+            <div class="metric-card${brewWaterEnt ? " clickable" : ""}"${brewWaterEnt ? ` data-entity-id="${brewWaterEnt}" title="Click to view history graph"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:water-pump"></ha-icon>
                 <span>Water Dispensed</span>
@@ -664,7 +725,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
 
-            <div class="metric-card">
+            <div class="metric-card${brewMassEnt ? " clickable" : ""}"${brewMassEnt ? ` data-entity-id="${brewMassEnt}" title="Click to view history graph"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:scale"></ha-icon>
                 <span>Mass Output</span>
@@ -674,7 +735,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
 
-            <div class="metric-card">
+            <div class="metric-card${brewTempEnt ? " clickable" : ""}"${brewTempEnt ? ` data-entity-id="${brewTempEnt}" title="Click to view history graph"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:thermometer"></ha-icon>
                 <span>Brew Temp</span>
@@ -684,7 +745,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
 
-            <div class="metric-card">
+            <div class="metric-card${brewBloomEnt ? " clickable" : ""}"${brewBloomEnt ? ` data-entity-id="${brewBloomEnt}" title="Click to view history graph"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:timer-outline"></ha-icon>
                 <span>Bloom / Timer</span>
@@ -714,7 +775,7 @@ class MorningCoffeeCard extends HTMLElement {
               ${waterLevelPct.toFixed(0)}%
             </div>
           </div>
-          <div class="progress-bar-container">
+          <div class="progress-bar-container${waterLevelEnt ? " clickable" : ""}"${waterLevelEnt ? ` data-entity-id="${waterLevelEnt}" title="Click to view history graph"` : ""}>
             <div class="${barClass}" style="width: ${Math.min(100, Math.max(0, waterLevelPct))}%;"></div>
           </div>
           <div class="reservoir-footer">
@@ -753,6 +814,17 @@ class MorningCoffeeCard extends HTMLElement {
 
     root.innerHTML = html;
 
+    // Attach click listeners to all clickable telemetry and statistic items
+    root.querySelectorAll("[data-entity-id]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const entityId = el.getAttribute("data-entity-id");
+        if (entityId) {
+          this._openMoreInfo(entityId);
+        }
+      });
+    });
+
     const purgeBtn = this.shadowRoot.getElementById("purge-action");
     if (purgeBtn) {
       purgeBtn.addEventListener("click", () => this._handlePurge());
@@ -762,6 +834,16 @@ class MorningCoffeeCard extends HTMLElement {
     if (refillBtn) {
       refillBtn.addEventListener("click", () => this._handleRefill());
     }
+  }
+
+  _openMoreInfo(entityId) {
+    if (!entityId || !this._hass) return;
+    const event = new CustomEvent("hass-more-info", {
+      detail: { entityId },
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(event);
   }
 
   getCardSize() {

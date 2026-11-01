@@ -224,7 +224,7 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         # Default purge volume is 30ml
         self.coordinator.record_purge("M_123")
         self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 770.0)
-        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
         self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 30.0)
 
         # Explicit amount
@@ -252,7 +252,7 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
 
         # 800 - 28 = 772 ml
         self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 772.0)
-        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
         self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 28.0)
 
     async def test_purge_status_edge_detection(self):
@@ -275,7 +275,7 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
 
         # 800 - 30 (default purge vol) = 770 ml
         self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 770.0)
-        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "purge")
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
         self.assertEqual(self.coordinator.live_telemetry["M_123"].water_output, 30.0)
 
     async def test_fallback_brew_and_flow_meter_reconciliation(self):
@@ -382,6 +382,67 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
         self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 813.5)
         self.assertEqual(self.coordinator.get_lifetime_water_ml("M_123"), 1036.5)
+
+    async def test_purge_slosh_does_not_falsely_reset_water_level(self):
+        """Test transient LOW water sensor during purge does not falsely clamp to 0 or refill to full."""
+        self.coordinator.set_estimated_water_level("M_123", 500.0)
+        self.coordinator._previous_brew_counts["M_123"] = 10
+        self.coordinator._previous_water_levels["M_123"] = "NORMAL"
+        self.coordinator._previous_total_water["M_123"] = 1000
+        self.coordinator._previous_statuses["M_123"] = "READY"
+
+        # 1. Machine enters PURGE with transient LOW sensor due to pump vibration/slosh
+        m_slosh = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "LOW",
+            "brewCount": 10,
+            "status": "PURGE",
+            "brew": {"count": 10, "ml": 1000},
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_slosh])
+        await self.coordinator._async_update_data()
+
+        # Water level should NOT be clamped to 0.0 because machine is running
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 500.0)
+        # _previous_water_levels should NOT be recorded as LOW
+        self.assertEqual(self.coordinator._previous_water_levels["M_123"], "NORMAL")
+
+        # 2. Machine finishes PURGE and returns to READY, sensor returns to NORMAL
+        m_done = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 10,
+            "status": "READY",
+            "brew": {"count": 10, "ml": 1000},
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_done])
+        await self.coordinator._async_update_data()
+
+        # Decremented by 30ml purge, NOT reset to capacity (850ml)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 470.0)
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "done")
+
+    async def test_water_level_restored_from_hass_states_on_startup(self):
+        """Test water level is restored from existing entity state on coordinator initialization."""
+        coord = MorningDataUpdateCoordinator(
+            self.hass, self.client, self.entry, update_interval=timedelta(seconds=30)
+        )
+        mock_state = MagicMock()
+        mock_state.entity_id = "sensor.morning_m_123_water_tank_level"
+        mock_state.state = "450.0"
+        self.hass.states.async_all = MagicMock(return_value=[mock_state])
+
+        m = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 5,
+            "status": "READY",
+        })
+        self.client.get_machines = AsyncMock(return_value=[m])
+        await coord._async_update_data()
+
+        self.assertEqual(coord.get_estimated_water_level("M_123"), 450.0)
+        self.assertTrue(coord._water_level_seeded["M_123"])
 
 
 if __name__ == "__main__":
