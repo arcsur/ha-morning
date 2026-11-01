@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.8";
+const CARD_VERSION = "1.3.9";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -41,6 +41,7 @@ class MorningCoffeeCard extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._resolvedEntities = {};
+    this._setupClickListener();
   }
 
   static getStubConfig(hass, entities) {
@@ -86,16 +87,49 @@ class MorningCoffeeCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
 
-    if (
-      this._config.entity &&
-      (Object.keys(this._resolvedEntities).length === 0 ||
+    if (this._config.entity) {
+      const needsResolve =
+        Object.keys(this._resolvedEntities).length === 0 ||
+        this._resolvedEntities.status !== this._config.entity ||
         !this._resolvedEntities.total_brews ||
-        !this._resolvedEntities.water_level)
-    ) {
-      this._resolveEntities();
+        !this._resolvedEntities.water_level ||
+        !this._resolvedEntities.lifetime_water;
+      if (needsResolve) {
+        this._resolveEntities();
+      }
     }
 
     this._updateContent();
+  }
+
+  _setupClickListener() {
+    if (this._hasClickListener) return;
+    this._hasClickListener = true;
+    this.shadowRoot.addEventListener("click", (e) => {
+      const path = e.composedPath ? e.composedPath() : [e.target];
+      for (const el of path) {
+        if (!el || !el.getAttribute) continue;
+
+        if (el.id === "purge-action") {
+          e.stopPropagation();
+          this._handlePurge();
+          return;
+        }
+
+        if (el.id === "refill-action") {
+          e.stopPropagation();
+          this._handleRefill();
+          return;
+        }
+
+        const entityId = el.getAttribute("data-entity-id");
+        if (entityId) {
+          e.stopPropagation();
+          this._openMoreInfo(entityId, el);
+          return;
+        }
+      }
+    });
   }
 
   _resolveEntities() {
@@ -477,11 +511,12 @@ class MorningCoffeeCard extends HTMLElement {
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .clickable {
+        [data-entity-id],
+        [data-entity-id] * {
           cursor: pointer !important;
-          user-select: none;
         }
-        .diag-item.clickable {
+        .clickable,
+        .clickable * {
           cursor: pointer !important;
         }
         .diag-item.clickable:hover {
@@ -489,9 +524,6 @@ class MorningCoffeeCard extends HTMLElement {
           border-color: rgba(255, 255, 255, 0.25) !important;
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
           transform: translateY(-1px);
-        }
-        .metric-card.clickable {
-          cursor: pointer !important;
         }
         .metric-card.clickable:hover {
           background: rgba(0, 0, 0, 0.4) !important;
@@ -510,32 +542,7 @@ class MorningCoffeeCard extends HTMLElement {
       </ha-card>
     `;
 
-    // Event delegation: capture clicks on any [data-entity-id] or action buttons reliably
-    this.shadowRoot.addEventListener("click", (e) => {
-      const path = e.composedPath ? e.composedPath() : [e.target];
-      for (const el of path) {
-        if (!el || !el.getAttribute) continue;
-
-        if (el.id === "purge-action") {
-          e.stopPropagation();
-          this._handlePurge();
-          return;
-        }
-
-        if (el.id === "refill-action") {
-          e.stopPropagation();
-          this._handleRefill();
-          return;
-        }
-
-        const entityId = el.getAttribute("data-entity-id");
-        if (entityId) {
-          e.stopPropagation();
-          this._openMoreInfo(entityId, el);
-          return;
-        }
-      }
-    });
+    this._setupClickListener();
   }
 
   _handleRefill() {
@@ -557,27 +564,24 @@ class MorningCoffeeCard extends HTMLElement {
     const entityId = this._resolvedEntities[id];
     const clickableClass = entityId ? " clickable" : "";
     const dataAttr = entityId ? ` data-entity-id="${entityId}"` : "";
-    const titleAttr = entityId
-      ? ` title="Click to view history graph for ${entityId} (v${CARD_VERSION})"`
-      : "";
 
     switch (id) {
       case "total_brews":
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Total Brews</span>
             <span class="diag-val">${this._getValue("total_brews", "--")}</span>
           </div>`;
       case "limescale":
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Limescale</span>
             <span class="diag-val">${this._getValue("limescale", "--")}</span>
           </div>`;
       case "child_lock": {
         const isLocked = this._getValue("child_lock", "off") === "on";
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Child Lock</span>
             <span class="diag-val" style="color: ${isLocked ? "#e67e22" : "inherit"};">${isLocked ? "Active" : "Off"}</span>
           </div>`;
@@ -585,34 +589,34 @@ class MorningCoffeeCard extends HTMLElement {
       case "standby": {
         const timeout = this._getValue("standby", "--");
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Standby</span>
             <span class="diag-val">${timeout !== "--" ? timeout + "s" : "--"}</span>
           </div>`;
       }
       case "firmware":
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Firmware</span>
             <span class="diag-val">${this._getValue("firmware", "--")}</span>
           </div>`;
       case "slave_firmware":
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Motor Controller</span>
             <span class="diag-val">${this._getValue("slave_firmware", "--")}</span>
           </div>`;
       case "lifetime_water": {
         const ltr = parseFloat(this._getValue("lifetime_water", "0.0") || "0.0");
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Lifetime Water</span>
             <span class="diag-val">${ltr.toFixed(1)} L</span>
           </div>`;
       }
       case "fault_code":
         return `
-          <div class="diag-item${clickableClass}"${dataAttr}${titleAttr}>
+          <div class="diag-item${clickableClass}"${dataAttr}>
             <span class="diag-label">Fault Code</span>
             <span class="diag-val">${this._getValue("fault_code", "None")}</span>
           </div>`;
@@ -756,7 +760,7 @@ class MorningCoffeeCard extends HTMLElement {
           ${stepperHtml}
 
           <div class="telemetry-grid">
-            <div class="metric-card${brewWaterEnt ? " clickable" : ""}"${brewWaterEnt ? ` data-entity-id="${brewWaterEnt}" title="Click to view history graph"` : ""}>
+            <div class="metric-card${brewWaterEnt ? " clickable" : ""}"${brewWaterEnt ? ` data-entity-id="${brewWaterEnt}"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:water-pump"></ha-icon>
                 <span>Water Dispensed</span>
@@ -766,7 +770,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
 
-            <div class="metric-card${brewMassEnt ? " clickable" : ""}"${brewMassEnt ? ` data-entity-id="${brewMassEnt}" title="Click to view history graph"` : ""}>
+            <div class="metric-card${brewMassEnt ? " clickable" : ""}"${brewMassEnt ? ` data-entity-id="${brewMassEnt}"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:scale"></ha-icon>
                 <span>Mass Output</span>
@@ -776,7 +780,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
 
-            <div class="metric-card${brewTempEnt ? " clickable" : ""}"${brewTempEnt ? ` data-entity-id="${brewTempEnt}" title="Click to view history graph"` : ""}>
+            <div class="metric-card${brewTempEnt ? " clickable" : ""}"${brewTempEnt ? ` data-entity-id="${brewTempEnt}"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:thermometer"></ha-icon>
                 <span>Brew Temp</span>
@@ -786,7 +790,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
 
-            <div class="metric-card${brewBloomEnt ? " clickable" : ""}"${brewBloomEnt ? ` data-entity-id="${brewBloomEnt}" title="Click to view history graph"` : ""}>
+            <div class="metric-card${brewBloomEnt ? " clickable" : ""}"${brewBloomEnt ? ` data-entity-id="${brewBloomEnt}"` : ""}>
               <div class="metric-header">
                 <ha-icon icon="mdi:timer-outline"></ha-icon>
                 <span>Bloom / Timer</span>
@@ -816,7 +820,7 @@ class MorningCoffeeCard extends HTMLElement {
               ${waterLevelPct.toFixed(0)}%
             </div>
           </div>
-          <div class="progress-bar-container${waterLevelEnt ? " clickable" : ""}"${waterLevelEnt ? ` data-entity-id="${waterLevelEnt}" title="Click to view history graph"` : ""}>
+          <div class="progress-bar-container${waterLevelEnt ? " clickable" : ""}"${waterLevelEnt ? ` data-entity-id="${waterLevelEnt}"` : ""}>
             <div class="${barClass}" style="width: ${Math.min(100, Math.max(0, waterLevelPct))}%;"></div>
           </div>
           <div class="reservoir-footer">
@@ -859,42 +863,41 @@ class MorningCoffeeCard extends HTMLElement {
   _openMoreInfo(entityId, sourceNode = null) {
     if (!entityId || !this._hass) return;
 
-    // 1. Standard Home Assistant more-info event
-    const moreInfoEvent = new Event("hass-more-info", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-    });
-    moreInfoEvent.detail = { entityId, view: "info" };
-
-    // 2. Modern Lovelace action event
-    const actionEvent = new Event("hass-action", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-    });
-    actionEvent.detail = {
-      config: {
-        entity: entityId,
-        tap_action: {
-          action: "more-info",
-        },
-      },
-      action: "tap",
-    };
-
-    // Dispatch to source element (inside shadow DOM), card host element, and root containers
     const targets = [sourceNode, this, window];
     try {
       const ha = document.querySelector("home-assistant");
-      if (ha) targets.push(ha);
+      if (ha && !targets.includes(ha)) targets.push(ha);
     } catch (_) {}
 
     for (const target of targets) {
       if (target && typeof target.dispatchEvent === "function") {
         try {
-          target.dispatchEvent(moreInfoEvent);
-          target.dispatchEvent(actionEvent);
+          // 1. Standard Home Assistant more-info event
+          target.dispatchEvent(
+            new CustomEvent("hass-more-info", {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              detail: { entityId },
+            })
+          );
+          // 2. Modern Lovelace action event
+          target.dispatchEvent(
+            new CustomEvent("hass-action", {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              detail: {
+                config: {
+                  entity: entityId,
+                  tap_action: {
+                    action: "more-info",
+                  },
+                },
+                action: "tap",
+              },
+            })
+          );
         } catch (_) {}
       }
     }
@@ -1065,18 +1068,18 @@ class MorningCoffeeCardEditor extends HTMLElement {
   }
 
   _updateEntityOptions() {
-    if (!this._hass) return;
+    if (!this._hass || !this._hass.states) return;
     const select = this.shadowRoot.getElementById("entity-select");
     if (!select) return;
 
-    const currentVal = this._config.entity || select.value;
+    const currentVal = (this._config && this._config.entity) || select.value;
     const statusEntities = Object.keys(this._hass.states).filter(
       (e) => e.startsWith("sensor.") && (e.endsWith("_status") || e.includes("morning"))
     );
 
     let html = `<option value="">Select a status entity...</option>`;
     statusEntities.forEach((e) => {
-      const friendly = this._hass.states[e].attributes.friendly_name || e;
+      const friendly = this._hass.states[e]?.attributes?.friendly_name || e;
       html += `<option value="${e}" ${currentVal === e ? "selected" : ""}>${e} (${friendly})</option>`;
     });
     select.innerHTML = html;
