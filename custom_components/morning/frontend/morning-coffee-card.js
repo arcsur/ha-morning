@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.5";
+const CARD_VERSION = "1.3.6";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -607,10 +607,6 @@ class MorningCoffeeCard extends HTMLElement {
     const waterLevelMl = Number.isFinite(rawWaterMl) ? rawWaterMl : 850;
     const rawWaterPct = parseFloat(this._getValue("water_pct", "100"));
     const waterLevelPct = Number.isFinite(rawWaterPct) ? rawWaterPct : 100;
-    const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
-    const displayStatus = (rawStatus === "brewing" && stage === "done") ? "done" : rawStatus;
-    const isBrewing = (rawStatus === "brewing" && stage !== "done") || (stage !== "idle" && stage !== "done");
-
     const rawWaterDisp = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
     const waterDispensed = Number.isFinite(rawWaterDisp) ? rawWaterDisp : 0.0;
     const rawMassDisp = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
