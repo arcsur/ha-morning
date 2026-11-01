@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.6";
+const CARD_VERSION = "1.3.7";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -86,7 +86,12 @@ class MorningCoffeeCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
 
-    if (this._config.entity && Object.keys(this._resolvedEntities).length === 0) {
+    if (
+      this._config.entity &&
+      (Object.keys(this._resolvedEntities).length === 0 ||
+        !this._resolvedEntities.total_brews ||
+        !this._resolvedEntities.water_level)
+    ) {
       this._resolveEntities();
     }
 
@@ -101,7 +106,7 @@ class MorningCoffeeCard extends HTMLElement {
 
     let slug = mainEntity.replace("sensor.", "").replace("_status", "");
 
-    const findEntity = (typeKey, pattern) => {
+    const findEntity = (typeKey, pattern, preferredDomain = null) => {
       if (explicit[typeKey] && states[explicit[typeKey]]) {
         return explicit[typeKey];
       }
@@ -112,28 +117,33 @@ class MorningCoffeeCard extends HTMLElement {
           (idLower.includes(slug.toLowerCase()) || idLower.includes("morning"))
         );
       });
-      return candidates.length > 0 ? candidates[0] : null;
+      if (candidates.length === 0) return null;
+      if (preferredDomain) {
+        const pref = candidates.find((id) => id.startsWith(`${preferredDomain}.`));
+        if (pref) return pref;
+      }
+      return candidates[0];
     };
 
     this._resolvedEntities = {
       status: mainEntity,
-      water_level: findEntity("water_level", "water_tank_level"),
-      water_pct: findEntity("water_pct", "water_tank_percentage"),
-      brew_water: findEntity("brew_water", "brew_water_dispensed"),
-      brew_mass: findEntity("brew_mass", "brew_mass_dispensed"),
-      brew_temp: findEntity("brew_temp", "brew_temperature"),
-      brew_stage: findEntity("brew_stage", "brew_stage"),
-      brew_bloom: findEntity("brew_bloom", "brew_bloom_duration"),
-      total_brews: findEntity("total_brews", "total_brews") || findEntity("total_brews", "brew_count"),
-      limescale: findEntity("limescale", "limescale"),
-      standby: findEntity("standby", "standby_timeout"),
-      child_lock: findEntity("child_lock", "child_lock"),
-      firmware: findEntity("firmware", "firmware"),
-      slave_firmware: findEntity("slave_firmware", "motor_controller_firmware") || findEntity("slave_firmware", "slave_firmware"),
-      lifetime_water: findEntity("lifetime_water", "lifetime_water_used"),
-      fault_code: findEntity("fault_code", "fault_code"),
-      connectivity: findEntity("connectivity", "cloud_connection") || findEntity("connectivity", "connectivity"),
-      refill_button: findEntity("refill_button", "refill_water_tank"),
+      water_level: findEntity("water_level", "water_tank_level", "sensor"),
+      water_pct: findEntity("water_pct", "water_tank_percentage", "sensor"),
+      brew_water: findEntity("brew_water", "brew_water_dispensed", "sensor"),
+      brew_mass: findEntity("brew_mass", "brew_mass_dispensed", "sensor"),
+      brew_temp: findEntity("brew_temp", "brew_temperature", "sensor"),
+      brew_stage: findEntity("brew_stage", "brew_stage", "sensor"),
+      brew_bloom: findEntity("brew_bloom", "brew_bloom_duration", "sensor"),
+      total_brews: findEntity("total_brews", "total_brews", "sensor") || findEntity("total_brews", "brew_count", "sensor"),
+      limescale: findEntity("limescale", "limescale", "sensor"),
+      standby: findEntity("standby", "standby_timeout", "sensor"),
+      child_lock: findEntity("child_lock", "child_lock", "binary_sensor"),
+      firmware: findEntity("firmware", "firmware", "sensor"),
+      slave_firmware: findEntity("slave_firmware", "motor_controller_firmware", "sensor") || findEntity("slave_firmware", "slave_firmware", "sensor"),
+      lifetime_water: findEntity("lifetime_water", "lifetime_water_used", "sensor"),
+      fault_code: findEntity("fault_code", "fault_code", "sensor"),
+      connectivity: findEntity("connectivity", "cloud_connection", "binary_sensor") || findEntity("connectivity", "connectivity"),
+      refill_button: findEntity("refill_button", "refill_water_tank", "button"),
     };
   }
 
@@ -489,10 +499,32 @@ class MorningCoffeeCard extends HTMLElement {
       </ha-card>
     `;
 
-    const refillBtn = this.shadowRoot.getElementById("refill-action");
-    if (refillBtn) {
-      refillBtn.addEventListener("click", () => this._handleRefill());
-    }
+    // Event delegation: capture clicks on any [data-entity-id] or action buttons reliably
+    this.shadowRoot.addEventListener("click", (e) => {
+      const path = e.composedPath ? e.composedPath() : [e.target];
+      for (const el of path) {
+        if (!el || !el.getAttribute) continue;
+
+        if (el.id === "purge-action") {
+          e.stopPropagation();
+          this._handlePurge();
+          return;
+        }
+
+        if (el.id === "refill-action") {
+          e.stopPropagation();
+          this._handleRefill();
+          return;
+        }
+
+        const entityId = el.getAttribute("data-entity-id");
+        if (entityId) {
+          e.stopPropagation();
+          this._openMoreInfo(entityId, el);
+          return;
+        }
+      }
+    });
   }
 
   _handleRefill() {
@@ -809,37 +841,50 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     root.innerHTML = html;
-
-    // Attach click listeners to all clickable telemetry and statistic items
-    root.querySelectorAll("[data-entity-id]").forEach((el) => {
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const entityId = el.getAttribute("data-entity-id");
-        if (entityId) {
-          this._openMoreInfo(entityId);
-        }
-      });
-    });
-
-    const purgeBtn = this.shadowRoot.getElementById("purge-action");
-    if (purgeBtn) {
-      purgeBtn.addEventListener("click", () => this._handlePurge());
-    }
-
-    const refillBtn = this.shadowRoot.getElementById("refill-action");
-    if (refillBtn) {
-      refillBtn.addEventListener("click", () => this._handleRefill());
-    }
   }
 
-  _openMoreInfo(entityId) {
+  _openMoreInfo(entityId, sourceNode = null) {
     if (!entityId || !this._hass) return;
-    const event = new CustomEvent("hass-more-info", {
-      detail: { entityId },
+
+    // 1. Standard Home Assistant more-info event
+    const moreInfoEvent = new Event("hass-more-info", {
       bubbles: true,
+      cancelable: true,
       composed: true,
     });
-    this.dispatchEvent(event);
+    moreInfoEvent.detail = { entityId, view: "info" };
+
+    // 2. Modern Lovelace action event
+    const actionEvent = new Event("hass-action", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    actionEvent.detail = {
+      config: {
+        entity: entityId,
+        tap_action: {
+          action: "more-info",
+        },
+      },
+      action: "tap",
+    };
+
+    // Dispatch to source element (inside shadow DOM), card host element, and root containers
+    const targets = [sourceNode, this, window];
+    try {
+      const ha = document.querySelector("home-assistant");
+      if (ha) targets.push(ha);
+    } catch (_) {}
+
+    for (const target of targets) {
+      if (target && typeof target.dispatchEvent === "function") {
+        try {
+          target.dispatchEvent(moreInfoEvent);
+          target.dispatchEvent(actionEvent);
+        } catch (_) {}
+      }
+    }
   }
 
   getCardSize() {
