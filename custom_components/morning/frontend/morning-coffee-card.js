@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.7";
+const CARD_VERSION = "1.3.8";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -478,21 +478,32 @@ class MorningCoffeeCard extends HTMLElement {
           white-space: nowrap;
         }
         .clickable {
-          cursor: pointer;
+          cursor: pointer !important;
           user-select: none;
         }
+        .diag-item.clickable {
+          cursor: pointer !important;
+        }
         .diag-item.clickable:hover {
-          background: rgba(255, 255, 255, 0.08);
-          border-color: rgba(255, 255, 255, 0.16);
+          background: rgba(255, 255, 255, 0.12) !important;
+          border-color: rgba(255, 255, 255, 0.25) !important;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
           transform: translateY(-1px);
+        }
+        .metric-card.clickable {
+          cursor: pointer !important;
         }
         .metric-card.clickable:hover {
-          background: rgba(0, 0, 0, 0.35);
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+          background: rgba(0, 0, 0, 0.4) !important;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35) !important;
           transform: translateY(-1px);
         }
-        .reservoir-progress.clickable:hover {
-          opacity: 0.9;
+        .progress-bar-container.clickable {
+          cursor: pointer !important;
+        }
+        .progress-bar-container.clickable:hover {
+          opacity: 0.85;
+          filter: brightness(1.15);
         }
       </style>
       <ha-card id="card-root">
@@ -546,7 +557,9 @@ class MorningCoffeeCard extends HTMLElement {
     const entityId = this._resolvedEntities[id];
     const clickableClass = entityId ? " clickable" : "";
     const dataAttr = entityId ? ` data-entity-id="${entityId}"` : "";
-    const titleAttr = entityId ? ' title="Click to view history graph"' : "";
+    const titleAttr = entityId
+      ? ` title="Click to view history graph for ${entityId} (v${CARD_VERSION})"`
+      : "";
 
     switch (id) {
       case "total_brews":
@@ -1165,21 +1178,43 @@ class MorningCoffeeCardEditor extends HTMLElement {
   }
 }
 
-if (!customElements.get("morning-coffee-card")) {
-  customElements.define("morning-coffee-card", MorningCoffeeCard);
-}
-if (!customElements.get("morning-coffee-card-editor")) {
-  customElements.define("morning-coffee-card-editor", MorningCoffeeCardEditor);
+function registerOrHotPatch(tagName, cls) {
+  const existing = customElements.get(tagName);
+  if (!existing) {
+    customElements.define(tagName, cls);
+    return;
+  }
+  for (const name of Object.getOwnPropertyNames(cls.prototype)) {
+    if (name === "constructor") continue;
+    const desc = Object.getOwnPropertyDescriptor(cls.prototype, name);
+    if (desc) {
+      Object.defineProperty(existing.prototype, name, desc);
+    }
+  }
 }
 
+registerOrHotPatch("morning-coffee-card", MorningCoffeeCard);
+registerOrHotPatch("morning-coffee-card-editor", MorningCoffeeCardEditor);
+
+// Force active elements in page to immediately update prototype and re-render
+try {
+  document.querySelectorAll("morning-coffee-card").forEach((card) => {
+    if (card._render) card._render();
+    if (card._updateContent) card._updateContent();
+  });
+} catch (_) {}
+
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "morning-coffee-card",
-  name: "Morning Coffee Machine Card",
-  description: "Display Morning Machine telemetry, water level, and live brewing progress.",
-  preview: true,
-  documentationURL: "https://github.com/arcsur/ha-morning",
-});
+const existingCardMeta = window.customCards.find((c) => c.type === "morning-coffee-card");
+if (!existingCardMeta) {
+  window.customCards.push({
+    type: "morning-coffee-card",
+    name: "Morning Coffee Machine Card",
+    description: "Display Morning Machine telemetry, water level, and live brewing progress.",
+    preview: true,
+    documentationURL: "https://github.com/arcsur/ha-morning",
+  });
+}
 
 console.info(
   `%c MORNING-COFFEE-CARD %c v${CARD_VERSION} `,

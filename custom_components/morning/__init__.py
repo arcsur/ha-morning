@@ -97,7 +97,19 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     if not card_path.exists():
         return
 
+    version = "1.3.8"
+    try:
+        import json
+
+        manifest_path = Path(__file__).parent / "manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            version = manifest.get("version", version)
+    except Exception:
+        pass
+
     url = "/morning-card/morning-coffee-card.js"
+    versioned_url = f"{url}?v={version}"
 
     # Register HTTP static route if HTTP component is active
     if hasattr(hass, "http") and hass.http:
@@ -113,12 +125,12 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         except Exception as err:
             _LOGGER.debug("Could not register static path for morning-coffee-card: %s", err)
 
-    # Inject extra JS URL into frontend
+    # Inject extra JS URL into frontend with cache-busting version parameter
     try:
         from homeassistant.components.frontend import add_extra_js_url
 
-        add_extra_js_url(hass, url)
-        _LOGGER.debug("Injected %s into Lovelace frontend", url)
+        add_extra_js_url(hass, versioned_url)
+        _LOGGER.debug("Injected %s into Lovelace frontend", versioned_url)
     except Exception as err:
         _LOGGER.debug("Could not add_extra_js_url for morning-coffee-card: %s", err)
 
@@ -127,6 +139,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a Morning config entry."""
+    hass.data.pop("morning_frontend_registered", None)
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if entry_data and "iot_listener" in entry_data:
         await entry_data["iot_listener"].stop()

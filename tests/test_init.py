@@ -79,7 +79,7 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             await _async_register_frontend(self.hass)
             self.assertTrue(self.hass.data.get("morning_frontend_registered"))
             self.hass.http.async_register_static_paths.assert_called_once()
-            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js")
+            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.3.8")
 
             # Second call should be a no-op due to idempotency guard
             await _async_register_frontend(self.hass)
