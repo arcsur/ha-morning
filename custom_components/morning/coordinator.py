@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -71,6 +72,25 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self._last_live_brew_volume: dict[str, float] = {}
         self._unreconciled_brew_volume: dict[str, float] = {}
         self._active_polling_brew: dict[str, bool] = {}
+        self._brew_start_time: dict[str, float] = {}
+        self._active_brew_profile: dict[str, list[dict[str, Any]]] = {}
+        self._last_brew_profile: dict[str, list[dict[str, Any]]] = {}
+
+    def get_brew_profile(self, machine_id: str) -> list[dict[str, Any]]:
+        """Return active or last recorded brew extraction profile."""
+        telem = self.live_telemetry.get(machine_id)
+        if telem and telem.profile:
+            return telem.profile
+        return self._last_brew_profile.get(machine_id, [])
+
+    def set_restored_brew_profile(
+        self, machine_id: str, profile: list[dict[str, Any]]
+    ) -> None:
+        """Seed or restore last brew extraction profile."""
+        if profile and isinstance(profile, list):
+            self._last_brew_profile[machine_id] = profile
+            if machine_id in self.live_telemetry:
+                self.live_telemetry[machine_id].profile = profile
 
     def get_tank_capacity(self, machine_id: str | None = None) -> int:
         """Return configured tank capacity in ml."""
@@ -184,6 +204,12 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
             if not was_brewing:
                 return
             # Machine was active and now returned to idle/ready/eco
+            final_prof = self._active_brew_profile.pop(
+                machine_id, self._last_brew_profile.get(machine_id, [])
+            )
+            if final_prof:
+                self._last_brew_profile[machine_id] = final_prof
+
             if prev_telem and prev_telem.stage == "purge":
                 purge_vol = float(self.get_purge_volume(machine_id))
                 pre_brew = self.pre_brew_tank_levels.get(
@@ -196,6 +222,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     water_output=purge_vol,
                     is_brewing=False,
                     last_updated=time.time(),
+                    profile=self._last_brew_profile.get(machine_id, []),
                 )
             else:
                 telem = MorningLiveBrewTelemetry(
@@ -206,6 +233,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     bloom_lapse=prev_telem.bloom_lapse if prev_telem else 0,
                     is_brewing=False,
                     last_updated=time.time(),
+                    profile=self._last_brew_profile.get(machine_id, []),
                 )
             self._pending_live_brew_accounted[machine_id] = True
             self._last_live_brew_time[machine_id] = time.time()
@@ -217,6 +245,50 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         # When brewing starts, snapshot current water level as pre-brew baseline
         if not was_brewing and telem.is_brewing:
             self.pre_brew_tank_levels[machine_id] = self.get_estimated_water_level(machine_id)
+            self._brew_start_time[machine_id] = time.time()
+            self._active_brew_profile[machine_id] = [
+                {
+                    "t": 0.0,
+                    "water": round(telem.water_output, 1),
+                    "mass": round(telem.mass_output, 1),
+                    "temp": int(telem.temperature),
+                    "flow": 0.0,
+                    "stage": telem.stage,
+                }
+            ]
+
+        # While brewing, record real-time extraction curve profile
+        if telem.is_brewing:
+            start_t = self._brew_start_time.setdefault(machine_id, time.time())
+            elapsed = round(max(0.0, time.time() - start_t), 1)
+            prof = self._active_brew_profile.setdefault(machine_id, [])
+
+            flow = 0.0
+            if prof:
+                last_pt = prof[-1]
+                dt = elapsed - last_pt["t"]
+                if dt >= 0.2:
+                    dw = telem.water_output - last_pt["water"]
+                    flow = round(max(0.0, dw / dt), 1)
+                else:
+                    flow = last_pt.get("flow", 0.0)
+
+            if (
+                not prof
+                or (elapsed - prof[-1]["t"] >= 0.5)
+                or (telem.water_output != prof[-1]["water"])
+            ):
+                prof.append(
+                    {
+                        "t": elapsed,
+                        "water": round(telem.water_output, 1),
+                        "mass": round(telem.mass_output, 1),
+                        "temp": int(telem.temperature),
+                        "flow": flow,
+                        "stage": telem.stage,
+                    }
+                )
+            telem.profile = list(prof)
 
         # Dynamically decrement tank level during brew using water_output (or mass_output)
         dispensed = telem.water_output if telem.water_output > 0 else telem.mass_output
@@ -232,6 +304,27 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
             self._last_live_brew_time[machine_id] = time.time()
             self._last_live_brew_volume[machine_id] = dispensed
 
+            final_prof = self._active_brew_profile.pop(machine_id, [])
+            if final_prof:
+                start_t = self._brew_start_time.get(machine_id, time.time())
+                elapsed = round(max(0.0, time.time() - start_t), 1)
+                if not final_prof or final_prof[-1]["water"] != telem.water_output:
+                    final_prof.append(
+                        {
+                            "t": elapsed,
+                            "water": round(telem.water_output, 1),
+                            "mass": round(telem.mass_output, 1),
+                            "temp": int(
+                                telem.temperature
+                                or (prev_telem.temperature if prev_telem else 0)
+                            ),
+                            "flow": 0.0,
+                            "stage": "done",
+                        }
+                    )
+                self._last_brew_profile[machine_id] = final_prof
+            telem.profile = self._last_brew_profile.get(machine_id, [])
+
             # If purge completed without stream flow meter data, decrement configured purge volume
             if prev_telem and prev_telem.stage == "purge" and dispensed == 0:
                 purge_vol = float(self.get_purge_volume(machine_id))
@@ -245,6 +338,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     water_output=purge_vol,
                     is_brewing=False,
                     last_updated=time.time(),
+                    profile=self._last_brew_profile.get(machine_id, []),
                 )
 
             # Preserve previous final values if terminal packet had 0
@@ -257,6 +351,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     bloom_lapse=telem.bloom_lapse or prev_telem.bloom_lapse,
                     is_brewing=False,
                     last_updated=time.time(),
+                    profile=self._last_brew_profile.get(machine_id, []),
                 )
 
             if dispensed > 0:

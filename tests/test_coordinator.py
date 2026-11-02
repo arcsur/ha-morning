@@ -444,6 +444,58 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coord.get_estimated_water_level("M_123"), 450.0)
         self.assertTrue(coord._water_level_seeded["M_123"])
 
+    def test_live_brew_extraction_profile_recording(self):
+        """Test active brewing records high-resolution extraction curve profile."""
+        # 1. Brew starts
+        t1 = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=0.0,
+            mass_output=0.0,
+            temperature=92,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t1)
+        prof = self.coordinator.get_brew_profile("M_123")
+        self.assertEqual(len(prof), 1)
+        self.assertEqual(prof[0]["water"], 0.0)
+
+        # 2. Telemetry progresses
+        t2 = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=15.0,
+            mass_output=14.0,
+            temperature=93,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t2)
+        prof = self.coordinator.get_brew_profile("M_123")
+        self.assertGreaterEqual(len(prof), 2)
+        self.assertEqual(prof[-1]["water"], 15.0)
+        self.assertEqual(prof[-1]["mass"], 14.0)
+        self.assertEqual(prof[-1]["temp"], 93)
+
+        # 3. Brew completes
+        t3 = MorningLiveBrewTelemetry(
+            stage="done",
+            is_brewing=False,
+            water_output=36.0,
+            mass_output=35.5,
+            temperature=93,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t3)
+        final_prof = self.coordinator.get_brew_profile("M_123")
+        self.assertGreaterEqual(len(final_prof), 2)
+        self.assertEqual(final_prof[-1]["water"], 36.0)
+
+        # 4. Passive shadow report to ready retains profile
+        t4 = MorningLiveBrewTelemetry(
+            stage="ready",
+            is_brewing=False,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t4)
+        retained = self.coordinator.get_brew_profile("M_123")
+        self.assertEqual(retained, final_prof)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -98,6 +98,14 @@ if "homeassistant" not in sys.modules:
                     "description_placeholders": description_placeholders,
                 }
 
+        class MockSensorEntityDescription:
+            def __init__(self, key: str, **kwargs: Any):
+                self.key = key
+                self.name = kwargs.get("name")
+                self.state_class = kwargs.get("state_class")
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
         class MockOptionsFlow:
             """Stub OptionsFlow."""
 
@@ -195,6 +203,7 @@ if "homeassistant" not in sys.modules:
         sys.modules["homeassistant.components.sensor"] = ha_mock.components.sensor
         sys.modules["homeassistant.components.sensor"].SensorEntity = MockSensorEntity
         sys.modules["homeassistant.components.sensor"].RestoreSensor = MockRestoreSensor
+        sys.modules["homeassistant.components.sensor"].SensorEntityDescription = MockSensorEntityDescription
         sys.modules["homeassistant.components.binary_sensor"] = ha_mock.components.binary_sensor
         sys.modules["homeassistant.components.binary_sensor"].BinarySensorEntity = MockBinarySensorEntity
         sys.modules["homeassistant.components.number"] = ha_mock.components.number

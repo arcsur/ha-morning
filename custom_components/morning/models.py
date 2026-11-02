@@ -53,6 +53,7 @@ class MorningLiveBrewTelemetry:
     bloom_lapse: int = 0
     is_brewing: bool = False
     last_updated: float = 0.0
+    profile: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

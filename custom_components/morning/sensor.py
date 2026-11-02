@@ -359,7 +359,6 @@ class MorningBrewWaterDispensedSensor(MorningEntity, RestoreSensor):
             name="Brew Water Dispensed",
             has_entity_name=True,
             icon="mdi:water-pump",
-            state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfVolume.MILLILITERS,
         )
         self._attr_unique_id = f"{machine_id}_brew_water_dispensed"
@@ -383,6 +382,14 @@ class MorningBrewWaterDispensedSensor(MorningEntity, RestoreSensor):
             return round(telem.water_output, 1)
         return self._restored_val
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extraction profile attributes."""
+        profile = self.coordinator.get_brew_profile(self._machine_id)
+        if profile:
+            return {"extraction_profile": profile}
+        return {}
+
 
 class MorningBrewMassDispensedSensor(MorningEntity, RestoreSensor):
     """Sensor tracking mass dispensed during brewing (live updates, sticky post-brew)."""
@@ -400,7 +407,6 @@ class MorningBrewMassDispensedSensor(MorningEntity, RestoreSensor):
             has_entity_name=True,
             icon="mdi:scale",
             device_class=SensorDeviceClass.WEIGHT,
-            state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfMass.GRAMS,
         )
         self._attr_unique_id = f"{machine_id}_brew_mass_dispensed"
@@ -441,7 +447,6 @@ class MorningBrewTemperatureSensor(MorningEntity, SensorEntity):
             has_entity_name=True,
             icon="mdi:thermometer",
             device_class=SensorDeviceClass.TEMPERATURE,
-            state_class=SensorStateClass.MEASUREMENT,
             native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         )
         self._attr_unique_id = f"{machine_id}_brew_temperature"
@@ -455,7 +460,7 @@ class MorningBrewTemperatureSensor(MorningEntity, SensorEntity):
         return None
 
 
-class MorningBrewStageSensor(MorningEntity, SensorEntity):
+class MorningBrewStageSensor(MorningEntity, RestoreSensor):
     """Sensor tracking the active or last brew stage."""
 
     def __init__(
@@ -473,6 +478,15 @@ class MorningBrewStageSensor(MorningEntity, SensorEntity):
         )
         self._attr_unique_id = f"{machine_id}_brew_stage"
 
+    async def async_added_to_hass(self) -> None:
+        """Restore previous brew state and extraction profile."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.attributes:
+            prof = last_state.attributes.get("extraction_profile")
+            if prof and isinstance(prof, list):
+                self.coordinator.set_restored_brew_profile(self._machine_id, prof)
+
     @property
     def native_value(self) -> str | None:
         """Return current or sticky brew stage."""
@@ -480,6 +494,14 @@ class MorningBrewStageSensor(MorningEntity, SensorEntity):
         if telem:
             return telem.stage.lower()
         return "idle"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extraction profile attributes."""
+        profile = self.coordinator.get_brew_profile(self._machine_id)
+        if profile:
+            return {"extraction_profile": profile}
+        return {}
 
 
 class MorningBrewBloomSensor(MorningEntity, SensorEntity):

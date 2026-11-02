@@ -124,7 +124,17 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stage_sensor.native_value, "idle")
         self.assertEqual(bloom_sensor.native_value, 0)
 
+        # Verify transient brew sensors do not have state_class (avoids 5-min LTS decimation)
+        self.assertIsNone(water_sensor.entity_description.state_class)
+        self.assertIsNone(mass_sensor.entity_description.state_class)
+        self.assertIsNone(temp_sensor.entity_description.state_class)
+
         # Active brewing telemetry arrives
+        test_profile = [
+            {"t": 0.0, "water": 0.0, "mass": 0.0, "temp": 93, "flow": 0.0, "stage": "brewing"},
+            {"t": 5.0, "water": 35.5, "mass": 34.2, "temp": 93, "flow": 7.1, "stage": "brewing"},
+        ]
+        self.coordinator.get_brew_profile.return_value = test_profile
         self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(
             stage="brewing",
             is_brewing=True,
@@ -132,6 +142,7 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
             mass_output=34.2,
             temperature=93,
             bloom_lapse=10,
+            profile=test_profile,
         )
 
         self.assertEqual(water_sensor.native_value, 35.5)
@@ -139,6 +150,8 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(temp_sensor.native_value, 93)
         self.assertEqual(stage_sensor.native_value, "brewing")
         self.assertEqual(bloom_sensor.native_value, 10)
+        self.assertEqual(stage_sensor.extra_state_attributes["extraction_profile"], test_profile)
+        self.assertEqual(water_sensor.extra_state_attributes["extraction_profile"], test_profile)
 
         # Brew finishes -> values freeze and stay fixed
         self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(

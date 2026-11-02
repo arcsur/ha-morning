@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.3.9";
+const CARD_VERSION = "1.4.0";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -56,6 +56,7 @@ class MorningCoffeeCard extends HTMLElement {
       entity: statusEntity || "sensor.dagusmorning_status",
       show_header: true,
       show_brew_section: true,
+      show_extraction_curve: true,
       show_water_gauge: true,
       show_diagnostics: true,
       status_items: [...DEFAULT_STATUS_ITEMS],
@@ -74,6 +75,7 @@ class MorningCoffeeCard extends HTMLElement {
       name: null,
       show_header: true,
       show_brew_section: true,
+      show_extraction_curve: true,
       show_water_gauge: true,
       show_diagnostics: true,
       status_items: [...DEFAULT_STATUS_ITEMS],
@@ -87,7 +89,7 @@ class MorningCoffeeCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
 
-    if (this._config.entity) {
+    if (this._config.entity && this._hass && this._hass.states) {
       const needsResolve =
         Object.keys(this._resolvedEntities).length === 0 ||
         this._resolvedEntities.status !== this._config.entity ||
@@ -133,17 +135,18 @@ class MorningCoffeeCard extends HTMLElement {
   }
 
   _resolveEntities() {
-    if (!this._hass) return;
-    const mainEntity = this._config.entity;
+    if (!this._hass || !this._hass.states || !this._config || !this._config.entity) return;
     const states = this._hass.states;
+    const mainEntity = this._config.entity;
     const explicit = this._config.entities || {};
 
-    let slug = mainEntity.replace("sensor.", "").replace("_status", "");
+    let slug = (mainEntity || "").replace(/^sensor\./, "").replace(/_status$/, "");
 
     const findEntity = (typeKey, pattern, preferredDomain = null) => {
       if (explicit[typeKey] && states[explicit[typeKey]]) {
         return explicit[typeKey];
       }
+      if (!states) return null;
       const candidates = Object.keys(states).filter((id) => {
         const idLower = id.toLowerCase();
         return (
@@ -182,8 +185,8 @@ class MorningCoffeeCard extends HTMLElement {
   }
 
   _getState(key) {
-    if (!this._hass || !this._resolvedEntities[key]) return null;
-    return this._hass.states[this._resolvedEntities[key]];
+    if (!this._hass || !this._hass.states || !this._resolvedEntities || !this._resolvedEntities[key]) return null;
+    return this._hass.states[this._resolvedEntities[key]] || null;
   }
 
   _getValue(key, fallback = null) {
@@ -386,6 +389,163 @@ class MorningCoffeeCard extends HTMLElement {
           font-weight: 400;
           color: var(--secondary-text-color, #aaa);
           margin-left: 2px;
+        }
+
+        /* Extraction Curve Profile */
+        .extraction-container {
+          background: rgba(0, 0, 0, 0.28);
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          border-radius: 10px;
+          margin-top: 12px;
+          padding: 12px 14px 10px;
+          position: relative;
+          overflow: hidden;
+        }
+        .extraction-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .extraction-title {
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--secondary-text-color, #bbb);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .extraction-title ha-icon {
+          --mdc-icon-size: 15px;
+          color: var(--primary-color, #e67e22);
+        }
+        .extraction-badge {
+          font-size: 0.65rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          padding: 2px 7px;
+          border-radius: 10px;
+          letter-spacing: 0.5px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .extraction-badge.live {
+          background: rgba(230, 126, 34, 0.2);
+          color: #e67e22;
+          border: 1px solid rgba(230, 126, 34, 0.4);
+        }
+        .extraction-badge.live::before {
+          content: "";
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #e67e22;
+          box-shadow: 0 0 6px #e67e22;
+          animation: pulse-dot 1.2s infinite ease-in-out;
+        }
+        .extraction-badge.completed {
+          background: rgba(46, 204, 113, 0.15);
+          color: #2ecc71;
+          border: 1px solid rgba(46, 204, 113, 0.3);
+        }
+        .extraction-stats {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .stat-chip {
+          font-size: 0.68rem;
+          color: var(--primary-text-color, #fff);
+          background: rgba(255, 255, 255, 0.05);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-variant-numeric: tabular-nums;
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+        }
+        .stat-chip ha-icon {
+          --mdc-icon-size: 11px;
+          color: var(--secondary-text-color, #888);
+        }
+        .chart-svg-container {
+          position: relative;
+          width: 100%;
+        }
+        .chart-svg {
+          width: 100%;
+          height: auto;
+          display: block;
+          user-select: none;
+          touch-action: pan-y;
+        }
+        .chart-legend {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 14px;
+          margin-top: 6px;
+          font-size: 0.68rem;
+          color: var(--secondary-text-color, #888);
+        }
+        .legend-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .legend-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+        }
+        .legend-dot.yield {
+          background: #e67e22;
+          box-shadow: 0 0 4px rgba(230, 126, 34, 0.5);
+        }
+        .legend-dot.flow {
+          background: #3498db;
+          box-shadow: 0 0 4px rgba(52, 152, 219, 0.5);
+        }
+        .legend-dot.temp {
+          background: #e74c3c;
+          box-shadow: 0 0 4px rgba(231, 76, 60, 0.5);
+        }
+        .curve-crosshair {
+          stroke: rgba(255, 255, 255, 0.35);
+          stroke-width: 1;
+          stroke-dasharray: 2 2;
+          pointer-events: none;
+        }
+        .curve-tooltip {
+          position: absolute;
+          top: 6px;
+          pointer-events: none;
+          background: rgba(18, 18, 18, 0.92);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          backdrop-filter: blur(8px);
+          border-radius: 6px;
+          padding: 4px 8px;
+          font-size: 0.68rem;
+          color: #fff;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+          z-index: 10;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+          transform: translateX(-50%);
+          display: none;
+        }
+        @keyframes pulse-dot {
+          0% { transform: scale(0.9); opacity: 0.7; }
+          50% { transform: scale(1.3); opacity: 1; }
+          100% { transform: scale(0.9); opacity: 0.7; }
+        }
+        .pulse-head {
+          animation: pulse-dot 1.4s infinite ease-in-out;
+          transform-origin: center;
         }
 
         /* Water Reservoir Gauge */
@@ -626,10 +786,11 @@ class MorningCoffeeCard extends HTMLElement {
   }
 
   _updateContent() {
+    if (!this.shadowRoot) return;
     const root = this.shadowRoot.getElementById("card-root");
     if (!root) return;
 
-    if (!this._config.entity) {
+    if (!this._config || !this._config.entity) {
       root.innerHTML = `
         <div style="padding: 24px 16px; text-align: center; color: var(--secondary-text-color, #888);">
           <ha-icon icon="mdi:coffee-maker-outline" style="--mdc-icon-size: 36px; margin-bottom: 8px; display: inline-block; color: var(--primary-color, #e67e22);"></ha-icon>
@@ -637,6 +798,11 @@ class MorningCoffeeCard extends HTMLElement {
           <div style="font-size: 0.8rem; margin-top: 4px;">Please select an entity in the card editor.</div>
         </div>
       `;
+      return;
+    }
+
+    if (!this._hass || !this._hass.states) {
+      root.innerHTML = `<div style="padding: 16px; text-align: center; color: #888;">Loading...</div>`;
       return;
     }
 
@@ -723,7 +889,120 @@ class MorningCoffeeCard extends HTMLElement {
 
     // 2. Brewing / Extraction Progress Monitor
     const showBrewSection = this._config.show_brew_section !== false;
+    const showExtractionCurve = this._config.show_extraction_curve !== false;
+
     if (showBrewSection) {
+      let extractionCurveHtml = "";
+      if (showExtractionCurve) {
+        const stageState = this._getState("brew_stage");
+        const waterState = this._getState("brew_water");
+        const rawProfile =
+          stageState?.attributes?.extraction_profile ||
+          waterState?.attributes?.extraction_profile;
+        let profile = Array.isArray(rawProfile) ? rawProfile.slice() : [];
+
+        if (isBrewing) {
+          if (!this._activeProfileBuffer || !this._wasBrewing) {
+            this._activeProfileBuffer = [];
+            this._brewStartTime = Date.now();
+          }
+          const now = Math.max(0, (Date.now() - this._brewStartTime) / 1000);
+          const currentWater = waterDispensed;
+          const currentMass = massDispensed;
+          const currentTemp = Number.isFinite(parseFloat(brewTemp))
+            ? parseFloat(brewTemp)
+            : 0;
+          let flow = 0;
+          if (this._activeProfileBuffer.length > 0) {
+            const lastPt =
+              this._activeProfileBuffer[this._activeProfileBuffer.length - 1];
+            const dt = now - lastPt.t;
+            if (dt >= 0.25) {
+              flow = Math.max(0, (currentWater - lastPt.water) / dt);
+            } else {
+              flow = lastPt.flow || 0;
+            }
+          }
+          if (
+            this._activeProfileBuffer.length === 0 ||
+            now -
+              this._activeProfileBuffer[this._activeProfileBuffer.length - 1].t >=
+              0.45 ||
+            currentWater !==
+              this._activeProfileBuffer[this._activeProfileBuffer.length - 1].water
+          ) {
+            this._activeProfileBuffer.push({
+              t: Math.round(now * 10) / 10,
+              water: currentWater,
+              mass: currentMass,
+              temp: currentTemp,
+              flow: Math.round(flow * 10) / 10,
+              stage: stage,
+            });
+          }
+          if (profile.length < this._activeProfileBuffer.length) {
+            profile = this._activeProfileBuffer;
+          }
+        } else {
+          if (
+            this._wasBrewing &&
+            this._activeProfileBuffer &&
+            this._activeProfileBuffer.length > 0
+          ) {
+            this._lastCompletedProfile = this._activeProfileBuffer;
+            this._activeProfileBuffer = [];
+          }
+          if (profile.length === 0 && this._lastCompletedProfile) {
+            profile = this._lastCompletedProfile;
+          }
+        }
+        this._wasBrewing = isBrewing;
+
+        const stats = this._getExtractionStats(profile);
+        const svgContent = this._generateExtractionSvg(profile, isBrewing);
+
+        extractionCurveHtml = `
+          <div class="extraction-container">
+            <div class="extraction-header">
+              <div class="extraction-title">
+                <ha-icon icon="mdi:chart-bell-curve-cumulative"></ha-icon>
+                <span>Extraction Curve</span>
+              </div>
+              <div class="extraction-stats">
+                ${
+                  stats.duration > 0
+                    ? `
+                  <span class="stat-chip" title="Extraction Time"><ha-icon icon="mdi:timer-outline"></ha-icon>${stats.duration}s</span>
+                  <span class="stat-chip" title="Total Yield"><ha-icon icon="mdi:coffee"></ha-icon>${stats.finalYield}g</span>
+                  <span class="stat-chip" title="Peak Flow Rate"><ha-icon icon="mdi:waves-arrow-up"></ha-icon>${stats.peakFlow} ml/s</span>
+                  ${
+                    stats.avgTemp !== "--"
+                      ? `<span class="stat-chip" title="Avg Temp"><ha-icon icon="mdi:thermometer"></ha-icon>${stats.avgTemp}°C</span>`
+                      : ""
+                  }
+                `
+                    : ""
+                }
+                <span class="extraction-badge ${isBrewing ? "live" : "completed"}">
+                  ${isBrewing ? "Live" : "Profile"}
+                </span>
+              </div>
+            </div>
+            ${svgContent}
+            ${
+              profile && profile.length > 0
+                ? `
+              <div class="chart-legend">
+                <div class="legend-item"><span class="legend-dot yield"></span> Yield (g / mL)</div>
+                <div class="legend-item"><span class="legend-dot flow"></span> Flow Rate (mL/s)</div>
+                <div class="legend-item"><span class="legend-dot temp"></span> Temp (°C)</div>
+              </div>
+            `
+                : ""
+            }
+          </div>
+        `;
+      }
       const stepperHtml = isPurgeCycle
         ? `
           <div class="stepper">
@@ -800,6 +1079,7 @@ class MorningCoffeeCard extends HTMLElement {
               </div>
             </div>
           </div>
+          ${showExtractionCurve ? extractionCurveHtml : ""}
         </div>
       `;
     }
@@ -858,6 +1138,274 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     root.innerHTML = html;
+
+    if (showBrewSection && showExtractionCurve) {
+      const container = root.querySelector(".extraction-container");
+      if (
+        container &&
+        this._currentProfile &&
+        this._currentProfile.length >= 2
+      ) {
+        this._setupChartInteraction(
+          container,
+          this._currentProfile,
+          this._currentMaxT,
+          this._currentMaxOutput,
+          this._currentMaxFlow
+        );
+      }
+    }
+  }
+
+  _getSmoothPath(points) {
+    if (!points || points.length === 0) return "";
+    if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+    let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[Math.max(0, i - 1)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(points.length - 1, i + 2)];
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+    return d;
+  }
+
+  _getExtractionStats(profile) {
+    if (!Array.isArray(profile) || profile.length === 0) {
+      return { duration: "0.0", finalYield: "0.0", peakFlow: "0.0", avgTemp: "--" };
+    }
+    const last = profile[profile.length - 1];
+    const duration = typeof last?.t === "number" ? last.t : 0;
+    const yields = profile.map((p) => Math.max(Number(p.water) || 0, Number(p.mass) || 0));
+    const finalYield = yields.length > 0 ? Math.max(...yields) : 0;
+    const flows = profile.map((p) => Number(p.flow) || 0);
+    const peakFlow = flows.length > 0 ? Math.max(...flows) : 0;
+    const temps = profile.filter((p) => Number(p.temp) > 0).map((p) => Number(p.temp));
+    const avgTemp = temps.length > 0 ? Math.round(temps.reduce((a, b) => a + b, 0) / temps.length) : 0;
+    return {
+      duration: duration.toFixed(1),
+      finalYield: finalYield.toFixed(1),
+      peakFlow: peakFlow.toFixed(1),
+      avgTemp: avgTemp > 0 ? avgTemp : "--",
+    };
+  }
+
+  _generateExtractionSvg(profile, isBrewing) {
+    if (!Array.isArray(profile) || profile.length === 0) {
+      this._currentProfile = null;
+      return `
+        <div style="padding: 18px 12px; text-align: center; color: var(--secondary-text-color, #777); font-size: 0.75rem;">
+          <ha-icon icon="mdi:chart-bell-curve-cumulative" style="--mdc-icon-size: 24px; opacity: 0.35; display: block; margin: 0 auto 6px;"></ha-icon>
+          Extraction curve will record and display here during brewing.
+        </div>
+      `;
+    }
+
+    const lastT = Number(profile[profile.length - 1]?.t) || 0;
+    const maxT = Math.max(25, Math.ceil(lastT / 5) * 5);
+    const yields = profile.map((p) => Math.max(Number(p.water) || 0, Number(p.mass) || 0));
+    const rawMaxOutput = yields.length > 0 ? Math.max(...yields) : 0;
+    const maxOutput = Math.max(30, Math.ceil(rawMaxOutput / 10) * 10);
+    const flows = profile.map((p) => Number(p.flow) || 0);
+    const rawMaxFlow = flows.length > 0 ? Math.max(...flows) : 0;
+    const maxFlow = Math.max(3.0, Math.ceil(rawMaxFlow * 2) / 2);
+
+    this._currentProfile = profile;
+    this._currentMaxT = maxT;
+    this._currentMaxOutput = maxOutput;
+    this._currentMaxFlow = maxFlow;
+
+    const calcX = (t) => 35 + (t / maxT) * 350;
+    const calcYYield = (val) => 128 - ((val / maxOutput) * 113);
+    const calcYFlow = (flow) => 128 - ((flow / maxFlow) * 113);
+    const calcYTemp = (temp) => (temp > 0 ? 128 - (((Math.min(100, Math.max(60, temp)) - 60) / 40) * 113) : 128);
+
+    const yieldPts = profile.map((p) => ({
+      x: calcX(p.t),
+      y: calcYYield(Math.max(p.water || 0, p.mass || 0)),
+    }));
+    const flowPts = profile.map((p) => ({
+      x: calcX(p.t),
+      y: calcYFlow(p.flow || 0),
+    }));
+    const tempPts = profile
+      .filter((p) => p.temp > 0)
+      .map((p) => ({
+        x: calcX(p.t),
+        y: calcYTemp(p.temp),
+      }));
+
+    const yieldPath = this._getSmoothPath(yieldPts);
+    const flowPath = this._getSmoothPath(flowPts);
+    const tempPath = this._getSmoothPath(tempPts);
+
+    const firstPt = yieldPts[0];
+    const lastPt = yieldPts[yieldPts.length - 1];
+    const yieldAreaPath = `${yieldPath} L ${lastPt.x.toFixed(1)} 128 L ${firstPt.x.toFixed(1)} 128 Z`;
+
+    const gridY1 = 128;
+    const gridY2 = 128 - 113 * 0.33;
+    const gridY3 = 128 - 113 * 0.66;
+    const gridY4 = 15;
+
+    const xTicks = [];
+    const step = maxT <= 30 ? 5 : maxT <= 60 ? 10 : 15;
+    for (let t = 0; t <= maxT; t += step) {
+      xTicks.push(t);
+    }
+
+    return `
+      <div class="chart-svg-container">
+        <div class="curve-tooltip"></div>
+        <svg class="chart-svg" viewBox="0 0 420 150" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="yieldGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#e67e22" stop-opacity="0.32" />
+              <stop offset="100%" stop-color="#e67e22" stop-opacity="0.0" />
+            </linearGradient>
+            <filter id="flowGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="2" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          <!-- Grid Lines -->
+          <line x1="35" y1="${gridY1}" x2="385" y2="${gridY1}" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
+          <line x1="35" y1="${gridY2.toFixed(1)}" x2="385" y2="${gridY2.toFixed(1)}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="3 3" />
+          <line x1="35" y1="${gridY3.toFixed(1)}" x2="385" y2="${gridY3.toFixed(1)}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="3 3" />
+          <line x1="35" y1="${gridY4}" x2="385" y2="${gridY4}" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="3 3" />
+
+          <!-- Y Axis Labels Left (Yield in g/mL) -->
+          <text x="30" y="18" fill="rgba(255,255,255,0.4)" font-size="8.5" text-anchor="end" font-family="sans-serif">${maxOutput}</text>
+          <text x="30" y="${(gridY3 + 3).toFixed(1)}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="end" font-family="sans-serif">${Math.round(maxOutput * 0.66)}</text>
+          <text x="30" y="${(gridY2 + 3).toFixed(1)}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="end" font-family="sans-serif">${Math.round(maxOutput * 0.33)}</text>
+          <text x="30" y="131" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="end" font-family="sans-serif">0</text>
+
+          <!-- Y Axis Labels Right (Temp in °C) -->
+          <text x="390" y="18" fill="#e74c3c" opacity="0.6" font-size="8.5" text-anchor="start" font-family="sans-serif">100°</text>
+          <text x="390" y="${(gridY2 + 3).toFixed(1)}" fill="#e74c3c" opacity="0.4" font-size="8" text-anchor="start" font-family="sans-serif">75°</text>
+          <text x="390" y="131" fill="#e74c3c" opacity="0.3" font-size="8" text-anchor="start" font-family="sans-serif">60°</text>
+
+          <!-- X Axis Ticks and Labels -->
+          ${xTicks.map((t) => {
+            const tx = calcX(t);
+            return `
+              <line x1="${tx.toFixed(1)}" y1="128" x2="${tx.toFixed(1)}" y2="132" stroke="rgba(255,255,255,0.15)" stroke-width="1" />
+              <text x="${tx.toFixed(1)}" y="142" fill="rgba(255,255,255,0.4)" font-size="8" text-anchor="middle" font-family="sans-serif">${t}s</text>
+            `;
+          }).join("")}
+
+          <!-- Yield Area Fill -->
+          <path d="${yieldAreaPath}" fill="url(#yieldGrad)" />
+
+          <!-- Temperature Curve (Red) -->
+          ${tempPath ? `<path d="${tempPath}" fill="none" stroke="#e74c3c" stroke-width="1.6" stroke-dasharray="3 2" opacity="0.85" />` : ""}
+
+          <!-- Flow Rate Curve (Blue) -->
+          ${flowPath ? `<path d="${flowPath}" fill="none" stroke="#3498db" stroke-width="1.8" opacity="0.85" filter="url(#flowGlow)" />` : ""}
+
+          <!-- Yield Curve (Amber / Gold) -->
+          <path d="${yieldPath}" fill="none" stroke="#e67e22" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+
+          <!-- Live Head Pulsing Dot -->
+          ${isBrewing && lastPt ? `
+            <circle cx="${lastPt.x.toFixed(1)}" cy="${lastPt.y.toFixed(1)}" r="7" fill="#e67e22" opacity="0.3" class="pulse-head" />
+            <circle cx="${lastPt.x.toFixed(1)}" cy="${lastPt.y.toFixed(1)}" r="4" fill="#ffffff" stroke="#e67e22" stroke-width="2" />
+          ` : ""}
+
+          <!-- Interactive Elements -->
+          <line class="curve-crosshair" y1="15" y2="128" x1="0" x2="0" style="display: none;" />
+          <circle class="dot-yield" r="4" fill="#e67e22" stroke="#fff" stroke-width="1.5" style="display: none;" />
+          <circle class="dot-flow" r="3.5" fill="#3498db" stroke="#fff" stroke-width="1.5" style="display: none;" />
+          <circle class="dot-temp" r="3.5" fill="#e74c3c" stroke="#fff" stroke-width="1.5" style="display: none;" />
+        </svg>
+      </div>
+    `;
+  }
+
+  _setupChartInteraction(container, profile, maxT, maxOutput, maxFlow) {
+    if (!container || !profile || profile.length < 2) return;
+    const svg = container.querySelector(".chart-svg");
+    const crosshair = container.querySelector(".curve-crosshair");
+    const tooltip = container.querySelector(".curve-tooltip");
+    const dotYield = container.querySelector(".dot-yield");
+    const dotFlow = container.querySelector(".dot-flow");
+    const dotTemp = container.querySelector(".dot-temp");
+    if (!svg || !crosshair || !tooltip) return;
+
+    const onPointerMove = (e) => {
+      const rect = svg.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const relX = clientX - rect.left;
+      const svgX = (relX / rect.width) * 420;
+
+      const clampedX = Math.max(35, Math.min(385, svgX));
+      const targetT = ((clampedX - 35) / 350) * maxT;
+
+      let closest = profile[0];
+      let minDiff = Math.abs(closest.t - targetT);
+      for (let i = 1; i < profile.length; i++) {
+        const diff = Math.abs(profile[i].t - targetT);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = profile[i];
+        }
+      }
+
+      const ptX = 35 + (closest.t / maxT) * 350;
+      const ptYYield = 128 - ((Math.max(closest.water || 0, closest.mass || 0) / maxOutput) * 113);
+      const ptYFlow = 128 - (((closest.flow || 0) / maxFlow) * 113);
+      const ptYTemp = closest.temp > 0 ? 128 - (((Math.min(100, Math.max(60, closest.temp)) - 60) / 40) * 113) : 128;
+
+      crosshair.setAttribute("x1", ptX.toFixed(1));
+      crosshair.setAttribute("x2", ptX.toFixed(1));
+      crosshair.style.display = "block";
+
+      if (dotYield) {
+        dotYield.setAttribute("cx", ptX.toFixed(1));
+        dotYield.setAttribute("cy", ptYYield.toFixed(1));
+        dotYield.style.display = "block";
+      }
+      if (dotFlow) {
+        dotFlow.setAttribute("cx", ptX.toFixed(1));
+        dotFlow.setAttribute("cy", ptYFlow.toFixed(1));
+        dotFlow.style.display = "block";
+      }
+      if (dotTemp) {
+        dotTemp.setAttribute("cx", ptX.toFixed(1));
+        dotTemp.setAttribute("cy", ptYTemp.toFixed(1));
+        dotTemp.style.display = "block";
+      }
+
+      tooltip.innerHTML = `
+        <span style="color: #aaa; margin-right: 4px;">${closest.t.toFixed(1)}s:</span>
+        <span style="color: #e67e22; font-weight: 600;">${(closest.mass || closest.water || 0).toFixed(1)}g</span>
+        <span style="color: #666; margin: 0 3px;">|</span>
+        <span style="color: #3498db;">${(closest.flow || 0).toFixed(1)} ml/s</span>
+        ${closest.temp > 0 ? `<span style="color: #666; margin: 0 3px;">|</span><span style="color: #e74c3c;">${closest.temp}°C</span>` : ""}
+      `;
+      const tipLeftPct = (ptX / 420) * 100;
+      tooltip.style.left = `${Math.max(15, Math.min(85, tipLeftPct))}%`;
+      tooltip.style.display = "block";
+    };
+
+    const onPointerLeave = () => {
+      crosshair.style.display = "none";
+      tooltip.style.display = "none";
+      if (dotYield) dotYield.style.display = "none";
+      if (dotFlow) dotFlow.style.display = "none";
+      if (dotTemp) dotTemp.style.display = "none";
+    };
+
+    svg.addEventListener("mousemove", onPointerMove);
+    svg.addEventListener("touchmove", onPointerMove, { passive: true });
+    svg.addEventListener("mouseleave", onPointerLeave);
+    svg.addEventListener("touchend", onPointerLeave);
   }
 
   _openMoreInfo(entityId, sourceNode = null) {
@@ -1038,6 +1586,10 @@ class MorningCoffeeCardEditor extends HTMLElement {
             <label for="show-brew">Display Brewing / Extraction Monitor</label>
           </div>
           <div class="checkbox-row">
+            <input type="checkbox" id="show-curve" />
+            <label for="show-curve">Display Extraction Curve (Live & Last Shot)</label>
+          </div>
+          <div class="checkbox-row">
             <input type="checkbox" id="show-gauge" />
             <label for="show-gauge">Display Water Reservoir Gauge</label>
           </div>
@@ -1105,6 +1657,7 @@ class MorningCoffeeCardEditor extends HTMLElement {
 
     bindCheckbox("show-header", "show_header");
     bindCheckbox("show-brew", "show_brew_section");
+    bindCheckbox("show-curve", "show_extraction_curve");
     bindCheckbox("show-gauge", "show_water_gauge");
     bindCheckbox("show-diag", "show_diagnostics");
 
@@ -1139,6 +1692,7 @@ class MorningCoffeeCardEditor extends HTMLElement {
 
     setChecked("show-header", this._config.show_header !== false && this._config.show_title !== false);
     setChecked("show-brew", this._config.show_brew_section !== false);
+    setChecked("show-curve", this._config.show_extraction_curve !== false);
     setChecked("show-gauge", this._config.show_water_gauge !== false);
     setChecked("show-diag", this._config.show_diagnostics !== false);
 
