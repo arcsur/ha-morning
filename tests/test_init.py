@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.morning import (
     async_reload_entry,
+    async_setup,
     async_setup_entry,
     async_unload_entry,
 )
@@ -25,6 +26,7 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
         """Set up test fixtures."""
         self.hass = MagicMock()
         self.hass.data = {}
+        self.hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         self.hass.config_entries = MagicMock()
         self.hass.config_entries.async_forward_entry_setups = AsyncMock()
         self.hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
@@ -62,6 +64,13 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             mock_iot_stop.assert_called_once()
             self.assertNotIn(self.entry.entry_id, self.hass.data[DOMAIN])
 
+    async def test_async_setup(self):
+        """Test component level async_setup."""
+        with patch("custom_components.morning._async_register_frontend", new_callable=AsyncMock) as mock_reg:
+            res = await async_setup(self.hass, {})
+            self.assertTrue(res)
+            mock_reg.assert_called_once_with(self.hass)
+
     async def test_reload_entry(self):
         """Test reload entry callback."""
         await async_reload_entry(self.hass, self.entry)
@@ -79,7 +88,7 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             await _async_register_frontend(self.hass)
             self.assertTrue(self.hass.data.get("morning_frontend_registered"))
             self.hass.http.async_register_static_paths.assert_called_once()
-            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.0")
+            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.1")
 
             # Second call should be a no-op due to idempotency guard
             await _async_register_frontend(self.hass)

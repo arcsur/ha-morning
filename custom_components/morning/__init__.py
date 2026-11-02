@@ -30,9 +30,16 @@ from .services import async_setup_services, async_unload_services
 _LOGGER = logging.getLogger(__name__)
 
 
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the Morning Coffee Machine component."""
+    await _async_register_frontend(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Morning Coffee Machine from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    await _async_register_frontend(hass)
 
     # Restore authentication session from stored tokens
     auth_session = MorningAuthSession(
@@ -74,7 +81,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "iot_listener": iot_listener,
     }
 
-    await _async_register_frontend(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_setup_services(hass)
 
@@ -97,16 +103,19 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     if not card_path.exists():
         return
 
-    version = "1.3.8"
-    try:
-        import json
-
+    def _get_version() -> str:
         manifest_path = Path(__file__).parent / "manifest.json"
         if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text())
-            version = manifest.get("version", version)
-    except Exception:
-        pass
+            import json
+
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                return str(manifest.get("version", "1.4.1"))
+            except Exception:
+                pass
+        return "1.4.1"
+
+    version = await hass.async_add_executor_job(_get_version)
 
     url = "/morning-card/morning-coffee-card.js"
     versioned_url = f"{url}?v={version}"

@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.4.0";
+const CARD_VERSION = "1.4.1";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -1748,6 +1748,13 @@ function registerOrHotPatch(tagName, cls) {
       Object.defineProperty(existing.prototype, name, desc);
     }
   }
+  for (const name of Object.getOwnPropertyNames(cls)) {
+    if (["length", "name", "prototype"].includes(name)) continue;
+    const desc = Object.getOwnPropertyDescriptor(cls, name);
+    if (desc) {
+      Object.defineProperty(existing, name, desc);
+    }
+  }
 }
 
 registerOrHotPatch("morning-coffee-card", MorningCoffeeCard);
@@ -1759,6 +1766,11 @@ try {
     if (card._render) card._render();
     if (card._updateContent) card._updateContent();
   });
+} catch (_) {}
+
+try {
+  window.dispatchEvent(new CustomEvent("ll-custom-elements-loaded"));
+  window.dispatchEvent(new CustomEvent("ll-rebuild"));
 } catch (_) {}
 
 window.customCards = window.customCards || [];
