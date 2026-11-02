@@ -45,8 +45,13 @@
 
 5. **Component Lifecycle & Hot-Patching**:
    - Keep the card as a zero-build vanilla ES module in `custom_components/morning/frontend/morning-coffee-card.js`.
-   - Use prototype hot-patching (`registerOrHotPatch`) so script re-fetches upgrade active card instances without requiring full window reloads.
+   - In `registerOrHotPatch(tagName, cls)`: copy both prototype properties (`cls.prototype`) and static constructor properties/methods (`cls`, e.g. `getConfigElement`, `getStubConfig`) onto existing constructors.
+   - Dispatch `window.dispatchEvent(new CustomEvent("ll-custom-elements-loaded"))` and `window.dispatchEvent(new CustomEvent("ll-rebuild"))` upon custom element registration so Lovelace immediately rebuilds any placeholder error cards (`Custom element doesn't exist: ...`) rendered during early boot before the script finished evaluating.
    - Auto-resolve sibling entities from the status sensor entity ID (`sensor.<slug>_status`) by device name pattern matching.
+
+6. **Static Resource Registration & Boot Invariants**:
+   - Always register static HTTP paths (`hass.http.async_register_static_paths`) and inject extra JS in component-level `async_setup(hass, config)` as well as at the very top of `async_setup_entry(hass, entry)` before any coordinator network calls (`async_config_entry_first_refresh`). Lovelace queries dashboard resources concurrently during early Home Assistant boot; registering static paths after network calls produces early 404s that poison browser ES module resolution.
+   - Avoid blocking file I/O inside the asyncio event loop: wrap file reads (such as `manifest.json`) in `await hass.async_add_executor_job(...)`.
 
 ### 4. Integration Release & Deployment Protocol
 - When modifying integration backend code or the Lovelace card:
