@@ -32,6 +32,10 @@
 2. **State & Startup Defensive Coding**:
    - Never assume `hass.states` or entity `.attributes` are populated during card or editor initialization.
    - Always guard access with optional chaining (e.g., `this._hass?.states?.[entityId]?.attributes?.friendly_name || entityId`) to prevent Lovelace "Configuration error" crashes during early HA startup.
+   - In `_resolveEntities()`: strictly guard `if (!this._hass?.states || !this._config?.entity) return;`. Never execute `Object.keys(states)` or string operations on uninitialized properties.
+   - In `_getState(key)`: verify `this._hass?.states?.[this._resolvedEntities?.[key]] || null`.
+   - In `_updateContent()`: guard with `if (!this._hass?.states)` and render a loading state rather than attempting entity queries.
+   - For state attributes containing arrays or objects (such as `extraction_profile`): always validate with `Array.isArray(attr)` before invoking `.slice()`, `.map()`, or `.filter()`.
 
 3. **Shadow DOM Event Dispatching**:
    - When firing Home Assistant native events (such as `hass-more-info` or `hass-action`) from within shadow DOM components, always instantiate `CustomEvent` (not generic `Event` with expando properties) with `{ bubbles: true, cancelable: true, composed: true, detail: { entityId } }` so the payload crosses shadow root boundaries intact.
@@ -43,3 +47,13 @@
    - Keep the card as a zero-build vanilla ES module in `custom_components/morning/frontend/morning-coffee-card.js`.
    - Use prototype hot-patching (`registerOrHotPatch`) so script re-fetches upgrade active card instances without requiring full window reloads.
    - Auto-resolve sibling entities from the status sensor entity ID (`sensor.<slug>_status`) by device name pattern matching.
+
+### 4. Integration Release & Deployment Protocol
+- When modifying integration backend code or the Lovelace card:
+  1. Bump version synchronously in `manifest.json`, `pyproject.toml`, and `morning-coffee-card.js`.
+  2. Update frontend asset version assertion in `tests/test_init.py` and verify `pytest` and `ruff` pass.
+  3. Commit and tag release (`git tag vX.Y.Z && git push origin main --tags`).
+  4. Refresh HACS repository info (`ha_manage_hacs(action="update_information", repository_id="1425736971")`).
+  5. Download updated version in HACS (`ha_manage_hacs(action="download", repository_id="1425736971", version="vX.Y.Z")`).
+  6. Update dashboard resource URL (`ha_config_set_dashboard_resource(..., url="/morning-card/morning-coffee-card.js?v=X.Y.Z")`).
+  7. Restart Home Assistant (`ha_restart`) to ensure updated backend code and static card assets load cleanly into memory.
