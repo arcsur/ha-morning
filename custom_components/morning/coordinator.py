@@ -26,8 +26,11 @@ from .const import (
     DEFAULT_PURGE_VOLUME,
     DEFAULT_TANK_CAPACITY,
     DOMAIN,
+    STATUS_ECO,
     STATUS_HEATING,
+    STATUS_IDLE,
     STATUS_PURGE,
+    STATUS_READY,
     WATER_LEVEL_LOW,
     WATER_LEVEL_NORMAL,
 )
@@ -688,7 +691,34 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     )
                     self.add_lifetime_water_ml(mid, purge_vol)
 
-                if curr_status != "BREWING":
+                if curr_status in (
+                    STATUS_IDLE,
+                    STATUS_READY,
+                    STATUS_ECO,
+                    "IDLE",
+                    "READY",
+                    "ECO",
+                    "POWER_OFF",
+                ):
+                    self._active_polling_brew.pop(mid, None)
+                    prev_t = self.live_telemetry.get(mid)
+                    if prev_t and prev_t.is_brewing:
+                        final_prof = self._active_brew_profile.pop(
+                            mid, self._last_brew_profile.get(mid, [])
+                        )
+                        if final_prof:
+                            self._last_brew_profile[mid] = final_prof
+                        self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                            stage="done",
+                            water_output=prev_t.water_output,
+                            mass_output=prev_t.mass_output,
+                            temperature=prev_t.temperature,
+                            bloom_lapse=prev_t.bloom_lapse,
+                            is_brewing=False,
+                            last_updated=time.time(),
+                            profile=self._last_brew_profile.get(mid, []),
+                        )
+                elif curr_status != "BREWING":
                     self._active_polling_brew.pop(mid, None)
 
                 if not is_running or mid not in self._previous_water_levels:

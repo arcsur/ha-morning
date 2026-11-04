@@ -542,6 +542,36 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(telem.is_brewing)
         self.assertEqual(telem.temperature, 85)
 
+    async def test_polling_idle_clears_active_brewing(self):
+        """Test REST polling transition to IDLE completes active brewing telemetry."""
+        # Active brew was running
+        self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=60.0,
+            mass_output=40.0,
+            temperature=92,
+        )
+        self.coordinator._previous_statuses["M_123"] = "BREWING"
+
+        # Machine now returns IDLE
+        m_idle = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 11,
+            "status": "IDLE",
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_idle])
+        await self.coordinator._async_update_data()
+
+        telem = self.coordinator.live_telemetry.get("M_123")
+        self.assertIsNotNone(telem)
+        self.assertEqual(telem.stage, "done")
+        self.assertFalse(telem.is_brewing)
+        self.assertEqual(telem.water_output, 60.0)
+        self.assertEqual(telem.mass_output, 40.0)
+        self.assertEqual(telem.temperature, 92)
+
 
 if __name__ == "__main__":
     unittest.main()

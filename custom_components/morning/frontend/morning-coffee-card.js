@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.4.2";
+const CARD_VERSION = "1.4.3";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -834,13 +834,9 @@ class MorningCoffeeCard extends HTMLElement {
     let bloomDuration = this._getValue("brew_bloom", "0");
 
     const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
-    const isHeating = stage === "heating" || rawStatus === "heating";
-    const isPurge = stage === "purge" || rawStatus === "purge";
-    const isBrewing = isHeating
-      || (rawStatus === "brewing" && stage !== "done")
-      || (rawStatus === "purge")
-      || (stage === "purge")
-      || (stage === "brewing" || stage === "blooming");
+    const isHeating = rawStatus === "heating";
+    const isPurge = rawStatus === "purge" || stage === "purge";
+    const isBrewing = (rawStatus === "brewing" || isHeating || isPurge) && stage !== "done";
     const displayStatus = (rawStatus === "brewing" && stage === "done")
       ? "done"
       : isPurge
@@ -857,8 +853,10 @@ class MorningCoffeeCard extends HTMLElement {
     let currentStepIndex = STAGE_ORDER.indexOf(stage);
     if (isHeating) {
       currentStepIndex = 0;
+    } else if (!isBrewing) {
+      currentStepIndex = stage === "done" ? 3 : -1;
     } else if (currentStepIndex === -1) {
-      currentStepIndex = isBrewing ? 2 : stage === "done" ? 3 : -1;
+      currentStepIndex = 2;
     }
 
     const heroClass = isBrewing ? "brew-hero brewing" : stage === "done" ? "brew-hero done" : "brew-hero";
@@ -924,69 +922,6 @@ class MorningCoffeeCard extends HTMLElement {
             brewTemp = String(latestPt.temp);
           }
         }
-
-        if (isBrewing) {
-          if (!this._activeProfileBuffer || !this._wasBrewing) {
-            this._activeProfileBuffer = [];
-            this._brewStartTime = Date.now();
-          }
-          const now = Math.max(0, (Date.now() - this._brewStartTime) / 1000);
-          const currentWater = waterDispensed;
-          const currentMass = massDispensed;
-          const currentTemp = Number.isFinite(parseFloat(brewTemp))
-            ? parseFloat(brewTemp)
-            : 0;
-          let flow = 0;
-          if (this._activeProfileBuffer.length > 0) {
-            const lastPt =
-              this._activeProfileBuffer[this._activeProfileBuffer.length - 1];
-            const dt = now - lastPt.t;
-            if (dt >= 0.25) {
-              flow = Math.max(0, (currentWater - lastPt.water) / dt);
-            } else {
-              flow = lastPt.flow || 0;
-            }
-          }
-          if (
-            this._activeProfileBuffer.length === 0 ||
-            now -
-              this._activeProfileBuffer[this._activeProfileBuffer.length - 1].t >=
-              0.45 ||
-            currentWater !==
-              this._activeProfileBuffer[this._activeProfileBuffer.length - 1].water
-          ) {
-            this._activeProfileBuffer.push({
-              t: Math.round(now * 10) / 10,
-              water: currentWater,
-              mass: currentMass,
-              temp: currentTemp,
-              flow: Math.round(flow * 10) / 10,
-              stage: stage,
-            });
-          }
-          const backendYields = profile.map((p) => Math.max(Number(p.water) || 0, Number(p.mass) || 0));
-          const maxBackendYield = backendYields.length > 0 ? Math.max(...backendYields) : 0;
-          if (profile.length < this._activeProfileBuffer.length && maxBackendYield === 0) {
-            profile = this._activeProfileBuffer;
-          }
-        } else {
-          if (
-            this._wasBrewing &&
-            this._activeProfileBuffer &&
-            this._activeProfileBuffer.length > 0
-          ) {
-            const localYields = this._activeProfileBuffer.map((p) => Math.max(Number(p.water) || 0, Number(p.mass) || 0));
-            const maxLocalYield = localYields.length > 0 ? Math.max(...localYields) : 0;
-            if (maxLocalYield > 0) {
-              this._lastCompletedProfile = this._activeProfileBuffer;
-            }
-            this._activeProfileBuffer = [];
-          }
-          if (profile.length === 0 && this._lastCompletedProfile) {
-            profile = this._lastCompletedProfile;
-          }
-        }
-        this._wasBrewing = isBrewing;
 
         const stats = this._getExtractionStats(profile);
         const svgContent = this._generateExtractionSvg(profile, isBrewing);
