@@ -431,11 +431,21 @@ class MorningBrewWaterDispensedSensor(MorningEntity, RestoreSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extraction profile attributes."""
+        """Return extraction profile and stage tracking attributes."""
+        attrs: dict[str, Any] = {}
         profile = self.coordinator.get_brew_profile(self._machine_id)
         if profile:
-            return {"extraction_profile": profile}
-        return {}
+            attrs["extraction_profile"] = profile
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
+        if telem:
+            if telem.stages_seen:
+                attrs["stages_seen"] = list(telem.stages_seen)
+            if telem.source and telem.source != "none":
+                attrs["telemetry_source"] = telem.source
+        iot = getattr(self.coordinator, "iot_listener", None)
+        if iot is not None and hasattr(iot, "is_connected"):
+            attrs["iot_connected"] = bool(iot.is_connected)
+        return attrs
 
 
 class MorningBrewMassDispensedSensor(MorningEntity, RestoreSensor):
@@ -569,11 +579,21 @@ class MorningBrewStageSensor(MorningEntity, RestoreSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extraction profile attributes."""
+        """Return extraction profile and stage tracking attributes."""
+        attrs: dict[str, Any] = {}
         profile = self.coordinator.get_brew_profile(self._machine_id)
         if profile:
-            return {"extraction_profile": profile}
-        return {}
+            attrs["extraction_profile"] = profile
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
+        if telem:
+            if telem.stages_seen:
+                attrs["stages_seen"] = list(telem.stages_seen)
+            if telem.source and telem.source != "none":
+                attrs["telemetry_source"] = telem.source
+        iot = getattr(self.coordinator, "iot_listener", None)
+        if iot is not None and hasattr(iot, "is_connected"):
+            attrs["iot_connected"] = bool(iot.is_connected)
+        return attrs
 
 
 class MorningBrewBloomSensor(MorningEntity, SensorEntity):

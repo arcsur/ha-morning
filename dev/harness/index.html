@@ -166,6 +166,7 @@
         <button id="btn-heating" class="primary">Heating</button>
         <button id="btn-blooming" class="primary">Blooming</button>
         <button id="btn-brewing" class="primary">Brewing</button>
+        <button id="btn-physical" class="primary">Physical Brew (No Bloom)</button>
         <button id="btn-done">Done (Sticky)</button>
         <button id="btn-cancel">Cancel Mid-Brew</button>
         <button id="btn-purge">Purge Cycle</button>
@@ -250,6 +251,7 @@
     document.getElementById("btn-heating").addEventListener("click", () => manager.setPreset("heating"));
     document.getElementById("btn-blooming").addEventListener("click", () => manager.setPreset("blooming"));
     document.getElementById("btn-brewing").addEventListener("click", () => manager.setPreset("brewing"));
+    document.getElementById("btn-physical").addEventListener("click", () => manager.setPreset("physical_no_bloom"));
     document.getElementById("btn-done").addEventListener("click", () => manager.setPreset("done"));
     document.getElementById("btn-cancel").addEventListener("click", () => manager.setPreset("cancel"));
     document.getElementById("btn-purge").addEventListener("click", () => manager.setPreset("purge"));

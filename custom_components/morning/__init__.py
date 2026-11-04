@@ -66,13 +66,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=timedelta(seconds=scan_interval),
     )
 
-    await coordinator.async_config_entry_first_refresh()
-
     iot_listener = MorningIotListener(
         coordinator=coordinator,
         client=client,
         session=session,
     )
+    coordinator.iot_listener = iot_listener
+
+    await coordinator.async_config_entry_first_refresh()
+
     iot_listener.start()
 
     hass.data[DOMAIN][entry.entry_id] = {

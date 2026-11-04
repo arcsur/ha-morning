@@ -628,6 +628,151 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(telem.is_brewing)
         self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), initial_water)
 
+    async def test_shadow_enrichment_and_physical_brew_progression(self):
+        """Test Thing Shadow enrichment and 1s shadow-tracked physical brew progression."""
+        m_initial = MorningMachine.from_dict(
+            {"id": "M_123", "name": "My Morning", "status": "ECO", "waterLevel": "NORMAL", "brewCount": 10}
+        )
+        mock_iot = MagicMock()
+        mock_iot.async_get_thing_shadow = AsyncMock(
+            return_value={
+                "state": {
+                    "reported": {
+                        "settings": {
+                            "status": "ECO",
+                            "waterLevel": "NORMAL",
+                            "brew": {"count": 10, "ml": 140674},
+                            "stm32Version": "1.0.4",
+                            "pumpFlowrate": {"K1": 1.1, "P1": 2.75},
+                        }
+                    }
+                }
+            }
+        )
+        self.coordinator.iot_listener = mock_iot
+        self.client.get_machines = AsyncMock(return_value=[m_initial])
+
+        data = await self.coordinator._async_update_data()
+        self.assertEqual(data["M_123"].total_water_ml, 140674)
+        self.assertEqual(data["M_123"].stm32_version, "1.0.4")
+        self.assertEqual(data["M_123"].pump_flow_rate_p1, 2.75)
+        self.coordinator.data = data
+
+        # 1. Physical dial triggers HEATING via Thing Shadow
+        self.coordinator.handle_shadow_update(
+            "M_123",
+            {
+                "state": {
+                    "reported": {
+                        "settings": {
+                            "status": "HEATING",
+                            "waterLevel": "NORMAL",
+                            "brew": {"count": 10, "ml": 140674},
+                        }
+                    }
+                }
+            },
+        )
+        telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(telem.stage, "heating")
+        self.assertTrue(telem.is_brewing)
+        self.assertEqual(telem.stages_seen, ["heating"])
+        self.assertEqual(telem.source, "shadow")
+
+        # 2. Physical dial enters BREWING (skipping blooming)
+        self.coordinator.handle_shadow_update(
+            "M_123",
+            {
+                "state": {
+                    "reported": {
+                        "settings": {
+                            "status": "BREWING",
+                            "waterLevel": "NORMAL",
+                            "brew": {"count": 10, "ml": 140674},
+                        }
+                    }
+                }
+            },
+        )
+        telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(telem.stage, "brewing")
+        self.assertTrue(telem.is_brewing)
+        self.assertEqual(telem.stages_seen, ["heating", "brewing"])
+        self.assertNotIn("blooming", telem.stages_seen)
+        self.assertGreaterEqual(len(self.coordinator.get_brew_profile("M_123")), 2)
+
+        # 3. Physical dial completes brew -> READY with brew.count=11 and brew.ml=140716 (+42 mL)
+        self.coordinator.handle_shadow_update(
+            "M_123",
+            {
+                "state": {
+                    "reported": {
+                        "settings": {
+                            "status": "READY",
+                            "waterLevel": "NORMAL",
+                            "brew": {"count": 11, "ml": 140716},
+                        }
+                    }
+                }
+            },
+        )
+        telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(telem.stage, "done")
+        self.assertFalse(telem.is_brewing)
+        self.assertEqual(telem.water_output, 42.0)
+        self.assertEqual(telem.mass_output, 42.0)
+        self.assertEqual(telem.stages_seen, ["heating", "brewing", "done"])
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 850.0 - 42.0)
+        final_prof = self.coordinator.get_brew_profile("M_123")
+        self.assertGreaterEqual(len(final_prof), 2)
+        self.assertEqual(final_prof[-1]["water"], 42.0)
+
+    async def test_shadow_physical_brew_cancel_resets_to_idle(self):
+        """Test physical brew canceled via Thing Shadow refunds water and resets to idle."""
+        m_initial = MorningMachine.from_dict(
+            {"id": "M_123", "name": "My Morning", "status": "ECO", "waterLevel": "NORMAL", "brewCount": 10}
+        )
+        self.client.get_machines = AsyncMock(return_value=[m_initial])
+        self.coordinator.data = await self.coordinator._async_update_data()
+        self.coordinator._previous_total_water["M_123"] = 140674
+
+        # Start physical BREWING
+        self.coordinator.handle_shadow_update(
+            "M_123",
+            {
+                "state": {
+                    "reported": {
+                        "settings": {
+                            "status": "BREWING",
+                            "waterLevel": "NORMAL",
+                            "brew": {"count": 10, "ml": 140674},
+                        }
+                    }
+                }
+            },
+        )
+        self.assertTrue(self.coordinator.live_telemetry["M_123"].is_brewing)
+
+        # User cancels on physical dial -> status returns to ECO with no brew.count or brew.ml change
+        self.coordinator.handle_shadow_update(
+            "M_123",
+            {
+                "state": {
+                    "reported": {
+                        "settings": {
+                            "status": "ECO",
+                            "waterLevel": "NORMAL",
+                            "brew": {"count": 10, "ml": 140674},
+                        }
+                    }
+                }
+            },
+        )
+        telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(telem.stage, "idle")
+        self.assertFalse(telem.is_brewing)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 850.0)
+
 
 if __name__ == "__main__":
     unittest.main()

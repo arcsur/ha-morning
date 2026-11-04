@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -46,7 +46,7 @@ class MorningFirmware:
 class MorningLiveBrewTelemetry:
     """Represents live telemetry from an active or recent brew."""
 
-    stage: str = "idle"  # idle, heating, brewing, done, cancelled, error
+    stage: str = "idle"  # idle, heating, blooming, brewing, done, cancel, error
     temperature: int = 0
     water_output: float = 0.0
     mass_output: float = 0.0
@@ -54,6 +54,8 @@ class MorningLiveBrewTelemetry:
     is_brewing: bool = False
     last_updated: float = 0.0
     profile: list[dict[str, Any]] = field(default_factory=list)
+    stages_seen: list[str] = field(default_factory=list)
+    source: str = "none"  # mqtt, shadow, poll, or none
 
 
 @dataclass(frozen=True)
@@ -147,6 +149,66 @@ class MorningMachine:
                 else None
             ),
             raw_data=data,
+        )
+
+    def with_shadow_doc(self, shadow_doc: dict[str, Any]) -> MorningMachine:
+        """Return a new MorningMachine enriched with AWS IoT Thing Shadow reported settings."""
+        if not isinstance(shadow_doc, dict):
+            return self
+        state = shadow_doc.get("state", shadow_doc)
+        if not isinstance(state, dict):
+            return self
+        reported = state.get("reported", state)
+        if not isinstance(reported, dict):
+            return self
+        settings = reported.get("settings", reported)
+        if not isinstance(settings, dict):
+            return self
+
+        brew_data = settings.get("brew") if isinstance(settings.get("brew"), dict) else {}
+        shadow_ml = int(brew_data.get("ml") or 0)
+        shadow_count = int(brew_data.get("count") or 0)
+
+        pump_rates = settings.get("pumpFlowrate") if isinstance(settings.get("pumpFlowrate"), dict) else {}
+        if not pump_rates and isinstance(settings.get("pumpFlowRate"), dict):
+            pump_rates = settings.get("pumpFlowRate", {})
+        raw_k1 = pump_rates.get("k1") if pump_rates.get("k1") is not None else pump_rates.get("K1")
+        raw_p1 = pump_rates.get("p1") if pump_rates.get("p1") is not None else pump_rates.get("P1")
+        k1 = float(raw_k1) if raw_k1 is not None else self.pump_flow_rate_k1
+        p1 = float(raw_p1) if raw_p1 is not None else self.pump_flow_rate_p1
+
+        status_val = str(settings.get("status") or "").strip()
+        water_lvl = str(settings.get("waterLevel") or "").strip()
+        stm32_ver = settings.get("stm32Version") or self.stm32_version
+        fault_info = (
+            settings.get("faultInfomation")
+            if "faultInfomation" in settings
+            else settings.get("faultInformation", self.fault_information)
+        )
+
+        raw_limescale = settings.get("limescale") or settings.get("limeScale")
+        limescale_val = int(raw_limescale) if raw_limescale is not None and str(raw_limescale).isdigit() else self.lime_scale
+
+        raw_child_lock = settings.get("childLock")
+        if isinstance(raw_child_lock, str):
+            child_lock_val = raw_child_lock.strip().upper() in ("ON", "TRUE", "1")
+        elif isinstance(raw_child_lock, bool):
+            child_lock_val = raw_child_lock
+        else:
+            child_lock_val = self.child_lock
+
+        return replace(
+            self,
+            status=status_val if status_val else self.status,
+            water_level=water_lvl if water_lvl else self.water_level,
+            lime_scale=limescale_val,
+            brew_count=max(self.brew_count, shadow_count),
+            total_water_ml=max(self.total_water_ml, shadow_ml),
+            stm32_version=str(stm32_ver) if stm32_ver else self.stm32_version,
+            fault_information=fault_info,
+            pump_flow_rate_k1=k1,
+            pump_flow_rate_p1=p1,
+            child_lock=child_lock_val,
         )
 
 

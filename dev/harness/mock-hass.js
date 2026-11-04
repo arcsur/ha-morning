@@ -81,6 +81,21 @@ export class MockHassManager {
       case "brewing":
         this.applyStates(brewingStates);
         break;
+      case "physical_no_bloom": {
+        const s = JSON.parse(JSON.stringify(brewingStates));
+        s["sensor.dagusmorning_status"].state = "brewing";
+        s["sensor.kitchen_dagusmorning_brew_stage"].state = "brewing";
+        s["sensor.kitchen_dagusmorning_brew_bloom_duration"].state = "0";
+        s["sensor.kitchen_dagusmorning_brew_stage"].attributes.stages_seen = ["heating", "brewing"];
+        s["sensor.kitchen_dagusmorning_brew_stage"].attributes.telemetry_source = "shadow";
+        s["sensor.kitchen_dagusmorning_brew_stage"].attributes.extraction_profile = [
+          { t: 0.0, water: 0.0, mass: 0.0, temp: 93, flow: 0.0, stage: "brewing" },
+          { t: 4.0, water: 11.0, mass: 11.0, temp: 93, flow: 2.8, stage: "brewing" },
+          { t: 10.0, water: 27.5, mass: 27.5, temp: 93, flow: 2.8, stage: "brewing" },
+        ];
+        this.applyStates(s);
+        break;
+      }
       case "done":
         this.applyStates(doneStates);
         break;

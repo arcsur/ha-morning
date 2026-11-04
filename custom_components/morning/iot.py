@@ -179,22 +179,28 @@ def encode_mqtt_connect(client_id: str, keepalive: int = 60) -> bytes:
     return bytes([0x10]) + rem_len + var_header + payload
 
 
-def encode_mqtt_subscribe(topic: str, packet_id: int = 1) -> bytes:
+def encode_mqtt_subscribe(topic: str, packet_id: int = 1, qos: int = 1) -> bytes:
     """Construct minimal MQTT 3.1.1 SUBSCRIBE packet."""
     topic_bytes = topic.encode("utf-8")
-    payload = struct.pack("!H", len(topic_bytes)) + topic_bytes + bytes([0])
+    payload = struct.pack("!H", len(topic_bytes)) + topic_bytes + bytes([qos & 0x03])
     var_header = struct.pack("!H", packet_id)
     rem_len = encode_mqtt_varlen(len(var_header) + len(payload))
     return bytes([0x82]) + rem_len + var_header + payload
 
 
-def decode_mqtt_publish(data: bytes) -> tuple[str, bytes] | None:
-    """Decode an incoming MQTT PUBLISH packet, returning (topic, payload)."""
+def encode_mqtt_puback(packet_id: int) -> bytes:
+    """Construct MQTT 3.1.1 PUBACK packet for QoS 1 messages."""
+    return bytes([0x40, 0x02]) + struct.pack("!H", packet_id)
+
+
+def decode_mqtt_publish_packet(data: bytes) -> tuple[str, bytes, int | None] | None:
+    """Decode an incoming MQTT PUBLISH packet, returning (topic, payload, packet_id)."""
     if len(data) < 4:
         return None
     pkt_type = data[0] >> 4
     if pkt_type != 3:  # 3 = PUBLISH
         return None
+    qos = (data[0] >> 1) & 0x03
 
     # Parse remaining length
     pos = 1
@@ -218,7 +224,24 @@ def decode_mqtt_publish(data: bytes) -> tuple[str, bytes] | None:
 
     topic = data[pos : pos + topic_len].decode("utf-8", errors="ignore")
     pos += topic_len
+
+    packet_id: int | None = None
+    if qos > 0:
+        if pos + 2 > len(data):
+            return None
+        packet_id = struct.unpack("!H", data[pos : pos + 2])[0]
+        pos += 2
+
     payload = data[pos:]
+    return topic, payload, packet_id
+
+
+def decode_mqtt_publish(data: bytes) -> tuple[str, bytes] | None:
+    """Decode an incoming MQTT PUBLISH packet, returning (topic, payload)."""
+    res = decode_mqtt_publish_packet(data)
+    if res is None:
+        return None
+    topic, payload, _ = res
     return topic, payload
 
 
@@ -273,6 +296,7 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
             bloom_lapse=bloom_lapse,
             is_brewing=is_brewing,
             last_updated=time.time(),
+            source="mqtt",
         )
 
     def _status_to_telemetry(status_val: str, temp_val: int = 0) -> MorningLiveBrewTelemetry | None:
@@ -357,7 +381,7 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
 
 
 class MorningIotListener:
-    """Manages AWS IoT WebSocket connection and live telemetry dispatching."""
+    """Manages AWS IoT WebSocket connection, Thing Shadow sync, and live telemetry dispatching."""
 
     def __init__(
         self,
@@ -370,43 +394,85 @@ class MorningIotListener:
         self.client = client
         self.session = session
         self._running = False
+        self.is_connected = False
         self._task: asyncio.Task | None = None
+        self._shadow_task: asyncio.Task | None = None
+        self._identity_id: str | None = None
+        self._credentials: dict[str, str] | None = None
+        self._creds_obtained_at: float = 0.0
 
     def start(self) -> None:
-        """Start listener background task."""
+        """Start listener background tasks."""
         if self._running:
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop(), name="morning_iot_stream")
-        _LOGGER.debug("Started Morning IoT telemetry background listener")
+        self._shadow_task = asyncio.create_task(
+            self._run_shadow_loop(), name="morning_iot_shadow_sync"
+        )
+        _LOGGER.debug("Started Morning IoT telemetry and shadow background listeners")
 
     async def stop(self) -> None:
-        """Stop listener background task."""
+        """Stop listener background tasks."""
         self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        self.is_connected = False
+        for task in (self._task, self._shadow_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._task = None
+        self._shadow_task = None
         _LOGGER.debug("Stopped Morning IoT telemetry background listener")
 
-    def _resolve_machine_id(self, topic: str) -> str | None:
-        """Resolve machine ID from topic string (e.g. PROD/user/{id}/{uuid}/response or $aws/things/{id}/...)."""
+    def _resolve_machine_id(
+        self,
+        topic: str,
+        payload_dict: dict[str, Any] | None = None,
+        own_identity_id: str | None = None,
+    ) -> str | None:
+        """Resolve machine ID from payload or topic string, filtering out foreign machines."""
+        if not self.coordinator or not self.coordinator.data:
+            return None
+
+        if isinstance(payload_dict, dict):
+            payload_mid = payload_dict.get("machineId") or payload_dict.get("id")
+            if not payload_mid and isinstance(payload_dict.get("data"), dict):
+                payload_mid = payload_dict["data"].get("machineId")
+            if not payload_mid and isinstance(payload_dict.get("state"), dict):
+                reported = payload_dict["state"].get("reported", {})
+                if isinstance(reported, dict):
+                    settings = reported.get("settings", reported)
+                    if isinstance(settings, dict):
+                        payload_mid = settings.get("id")
+            if payload_mid:
+                pmid_lower = str(payload_mid).lower()
+                for mid, machine in self.coordinator.data.items():
+                    if machine.id.lower() == pmid_lower or machine.uuid.lower() == pmid_lower:
+                        return mid
+                # Payload explicitly targeted a machine not owned by this coordinator
+                return None
+
         parts = topic.strip("/").split("/")
         if len(parts) >= 3 and parts[0] == "$aws" and parts[1] == "things":
             candidate_uuid = parts[2]
         else:
             candidate_uuid = parts[3] if len(parts) >= 4 else None
 
-        if self.coordinator.data:
-            if candidate_uuid:
-                cand_lower = candidate_uuid.lower()
-                for mid, machine in self.coordinator.data.items():
-                    if machine.uuid.lower() == cand_lower or machine.id.lower() == cand_lower:
-                        return mid
-            return next(iter(self.coordinator.data.keys()))
-        return None
+        if candidate_uuid:
+            cand_lower = candidate_uuid.lower()
+            for mid, machine in self.coordinator.data.items():
+                if machine.uuid.lower() == cand_lower or machine.id.lower() == cand_lower:
+                    return mid
+
+        # Only fallback to first machine if topic belongs to our own identity_id
+        if own_identity_id is not None and len(parts) >= 3 and parts[0] == "PROD" and parts[1] == "user":
+            if parts[2] != own_identity_id:
+                return None
+
+        return next(iter(self.coordinator.data.keys()))
 
     async def _get_credentials_and_identity(self) -> tuple[str, dict[str, str]] | None:
         """Fetch AWS Cognito Identity ID and temporary credentials."""
@@ -461,11 +527,74 @@ class MorningIotListener:
 
                 # Attach IoT Policy
                 await self._attach_policy(identity_id, credentials)
+                self._identity_id = identity_id
+                self._credentials = credentials
+                self._creds_obtained_at = time.time()
                 return identity_id, credentials
 
         except Exception as err:
             _LOGGER.warning("Failed retrieving AWS Cognito credentials for IoT: %s", err)
             return None
+
+    async def async_get_thing_shadow(self, machine_id: str) -> dict[str, Any] | None:
+        """Fetch the live AWS IoT Thing Shadow document for a machine."""
+        if not self._credentials or (time.time() - self._creds_obtained_at) > 2400:
+            res = await self._get_credentials_and_identity()
+            if not res:
+                return None
+
+        creds = self._credentials
+        if not creds:
+            return None
+
+        path = f"/things/{machine_id}/shadow"
+        url = f"https://{AWS_IOT_ENDPOINT}{path}"
+        headers = sign_sigv4_headers(
+            method="GET",
+            host=AWS_IOT_ENDPOINT,
+            path=path,
+            region=AWS_IOT_REGION,
+            service="iotdata",
+            credentials=creds,
+        )
+        try:
+            async with self.session.get(
+                url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json(content_type=None)
+                if resp.status in (401, 403):
+                    self._credentials = None
+                _LOGGER.debug("GetThingShadow(%s) returned HTTP %s", machine_id, resp.status)
+        except Exception as err:
+            _LOGGER.debug("GetThingShadow(%s) error: %s", machine_id, err)
+        return None
+
+    async def _run_shadow_loop(self) -> None:
+        """Poll AWS IoT Thing Shadow at 1s (active brew) / 3s (idle) cadence."""
+        while self._running:
+            try:
+                if self.coordinator and self.coordinator.data:
+                    for mid in list(self.coordinator.data.keys()):
+                        shadow_doc = await self.async_get_thing_shadow(mid)
+                        if shadow_doc and self.coordinator:
+                            self.coordinator.handle_shadow_update(mid, shadow_doc)
+
+                is_active = False
+                if self.coordinator and self.coordinator.data:
+                    for mid, machine in self.coordinator.data.items():
+                        st = str(machine.status or "").lower()
+                        telem = self.coordinator.live_telemetry.get(mid)
+                        if st in ("heating", "brewing", "purge") or (telem and telem.is_brewing):
+                            is_active = True
+                            break
+
+                await asyncio.sleep(1.0 if is_active else 3.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as err:
+                _LOGGER.debug("Shadow poll loop error: %s", err)
+                await asyncio.sleep(3.0)
 
     async def _attach_policy(self, identity_id: str, credentials: dict[str, str]) -> None:
         """Attach AWS IoT user policy to identity principal."""
@@ -537,16 +666,18 @@ class MorningIotListener:
                     if connack_rc != 0:
                         raise RuntimeError(f"MQTT broker rejected connection: return_code={connack_rc}")
 
+                    self.is_connected = True
                     _LOGGER.info("MQTT session accepted by broker (CONNACK return_code=0)")
 
-                    # Subscribe to topics
+                    # Subscribe to topics with QoS 1
                     sub_topics = [
-                        f"PROD/user/{identity_id}/+/response",
-                        f"PROD/user/{identity_id}/+/status",
+                        f"PROD/user/{identity_id}/#",
+                        "PROD/user/+/+/response",
+                        "PROD/user/+/+/status",
                     ]
                     for pid, top in enumerate(sub_topics, start=1):
                         _LOGGER.debug("Subscribing to MQTT topic: %s", top)
-                        await ws.send_bytes(encode_mqtt_subscribe(top, packet_id=pid))
+                        await ws.send_bytes(encode_mqtt_subscribe(top, packet_id=pid, qos=1))
 
                     last_ping = time.time()
                     while self._running and not ws.closed:
@@ -563,22 +694,41 @@ class MorningIotListener:
                             continue
 
                         if msg.type == aiohttp.WSMsgType.BINARY:
-                            parsed = decode_mqtt_publish(msg.data)
+                            pkt_type = msg.data[0] >> 4 if msg.data else 0
+                            if pkt_type == 9:  # SUBACK
+                                _LOGGER.debug("MQTT SUBACK received: %s", list(msg.data))
+                                continue
+
+                            parsed = decode_mqtt_publish_packet(msg.data)
                             if parsed:
-                                topic, payload_bytes = parsed
+                                topic, payload_bytes, pkt_id = parsed
+                                if pkt_id is not None:
+                                    await ws.send_bytes(encode_mqtt_puback(pkt_id))
                                 try:
                                     payload_dict = json.loads(payload_bytes.decode("utf-8"))
-                                    telem = decode_brew_progress_payload(payload_dict)
-                                    if telem:
-                                        target_mid = self._resolve_machine_id(topic)
-                                        if target_mid:
+                                    target_mid = self._resolve_machine_id(
+                                        topic, payload_dict, identity_id
+                                    )
+                                    if target_mid:
+                                        telem = decode_brew_progress_payload(payload_dict)
+                                        if telem:
+                                            _LOGGER.info(
+                                                "IoT MQTT telemetry for %s: stage=%s water=%.1f mass=%.1f temp=%d bloom=%d",
+                                                target_mid,
+                                                telem.stage,
+                                                telem.water_output,
+                                                telem.mass_output,
+                                                telem.temperature,
+                                                telem.bloom_lapse,
+                                            )
                                             self.coordinator.handle_live_brew_update(
                                                 target_mid, telem
                                             )
                                 except Exception as err:
-                                    _LOGGER.debug("Error parsing IoT brew telemetry: %s", err)
+                                    _LOGGER.warning("Error parsing IoT brew telemetry on %s: %s", topic, err)
 
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED):
+                            self.is_connected = False
                             _LOGGER.warning(
                                 "Morning IoT WebSocket closed by server: code=%s, extra=%s",
                                 ws.close_code,
@@ -586,14 +736,18 @@ class MorningIotListener:
                             )
                             break
 
+                    self.is_connected = False
+
                 # Sleep before reconnecting if WebSocket closed
                 if self._running:
                     await asyncio.sleep(backoff)
                     backoff = min(60, backoff * 2)
 
             except asyncio.CancelledError:
+                self.is_connected = False
                 break
             except Exception as err:
+                self.is_connected = False
                 _LOGGER.warning("Morning IoT live stream error: %s (retrying in %ds)", err, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(60, backoff * 2)

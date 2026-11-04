@@ -79,6 +79,17 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self._brew_start_time: dict[str, float] = {}
         self._active_brew_profile: dict[str, list[dict[str, Any]]] = {}
         self._last_brew_profile: dict[str, list[dict[str, Any]]] = {}
+        self._active_stages_seen: dict[str, list[str]] = {}
+        self._mqtt_live_active: dict[str, bool] = {}
+        self._last_mqtt_packet_ts: dict[str, float] = {}
+        self.iot_listener: Any = None
+
+    def _record_stage(self, machine_id: str, stage: str) -> list[str]:
+        """Record an observed brew stage in chronological order for a machine."""
+        stages = self._active_stages_seen.setdefault(machine_id, [])
+        if stage and stage not in stages:
+            stages.append(stage)
+        return list(stages)
 
     def get_brew_profile(self, machine_id: str) -> list[dict[str, Any]]:
         """Return active or last recorded brew extraction profile."""
@@ -215,6 +226,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
         # Handle explicit cancel / abort from machine immediately
         if telem.stage in ("cancel", "cancelled", "canceled", "abort", "aborted"):
+            self._mqtt_live_active[machine_id] = False
             dispensed = telem.water_output if telem.water_output > 0 else telem.mass_output
             if dispensed == 0 and prev_telem and prev_telem.is_brewing:
                 dispensed = (
@@ -228,6 +240,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
             if dispensed > 0:
                 self.add_lifetime_water_ml(machine_id, dispensed)
             self._active_brew_profile.pop(machine_id, None)
+            self._active_stages_seen.pop(machine_id, None)
             self._pending_live_brew_accounted[machine_id] = True
             self._last_live_brew_time[machine_id] = time.time()
             self._last_live_brew_volume[machine_id] = dispensed
@@ -240,6 +253,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                 is_brewing=False,
                 last_updated=time.time(),
                 profile=self._last_brew_profile.get(machine_id, []),
+                stages_seen=[],
+                source=telem.source or "mqtt",
             )
             self.async_update_listeners()
             return
@@ -251,12 +266,15 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     prev_telem.stage = "idle"
                     self.async_update_listeners()
                 return
+            self._mqtt_live_active[machine_id] = False
             # Machine was active and now returned to idle/ready/eco
             final_prof = self._active_brew_profile.pop(
                 machine_id, self._last_brew_profile.get(machine_id, [])
             )
             if final_prof:
                 self._last_brew_profile[machine_id] = final_prof
+            stages_seen = self._record_stage(machine_id, "done")
+            self._active_stages_seen.pop(machine_id, None)
 
             if prev_telem and prev_telem.stage == "purge":
                 purge_vol = float(self.get_purge_volume(machine_id))
@@ -271,6 +289,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     is_brewing=False,
                     last_updated=time.time(),
                     profile=self._last_brew_profile.get(machine_id, []),
+                    stages_seen=stages_seen,
+                    source=prev_telem.source or "mqtt",
                 )
             else:
                 telem = MorningLiveBrewTelemetry(
@@ -282,6 +302,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     is_brewing=False,
                     last_updated=time.time(),
                     profile=self._last_brew_profile.get(machine_id, []),
+                    stages_seen=stages_seen,
+                    source=prev_telem.source if prev_telem else "mqtt",
                 )
             self._pending_live_brew_accounted[machine_id] = True
             self._last_live_brew_time[machine_id] = time.time()
@@ -290,10 +312,15 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
             self.async_update_listeners()
             return
 
+        if telem.source == "mqtt":
+            self._mqtt_live_active[machine_id] = telem.is_brewing
+            self._last_mqtt_packet_ts[machine_id] = time.time()
+
         # When brewing starts, snapshot current water level as pre-brew baseline
         if not was_brewing and telem.is_brewing:
             self.pre_brew_tank_levels[machine_id] = self.get_estimated_water_level(machine_id)
             self._brew_start_time[machine_id] = time.time()
+            self._active_stages_seen[machine_id] = []
             self._active_brew_profile[machine_id] = [
                 {
                     "t": 0.0,
@@ -318,6 +345,11 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                 )
             ):
                 telem.stage = "blooming"
+
+            if telem.bloom_lapse > 0:
+                self._record_stage(machine_id, "blooming")
+            stages_seen = self._record_stage(machine_id, telem.stage)
+            telem.stages_seen = stages_seen
 
             # Preserve temperature if current packet has 0 but prev had valid temperature
             if telem.temperature <= 0 and prev_telem and prev_telem.temperature > 0:
@@ -364,6 +396,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
         # If brew just completed or stopped, mark live brew accounted for REST polling
         if was_brewing and not telem.is_brewing:
+            self._mqtt_live_active[machine_id] = False
             self._pending_live_brew_accounted[machine_id] = True
             self._last_live_brew_time[machine_id] = time.time()
             self._last_live_brew_volume[machine_id] = dispensed
@@ -388,6 +421,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     )
                 self._last_brew_profile[machine_id] = final_prof
             telem.profile = self._last_brew_profile.get(machine_id, [])
+            stages_seen = self._record_stage(machine_id, "done")
+            self._active_stages_seen.pop(machine_id, None)
 
             # If purge completed without stream flow meter data, decrement configured purge volume
             if prev_telem and prev_telem.stage == "purge" and dispensed == 0:
@@ -403,6 +438,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     is_brewing=False,
                     last_updated=time.time(),
                     profile=self._last_brew_profile.get(machine_id, []),
+                    stages_seen=stages_seen,
+                    source=telem.source or "mqtt",
                 )
 
             # Preserve previous final values if terminal packet had 0 (Terminal Packet Guard)
@@ -442,6 +479,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                 is_brewing=False,
                 last_updated=time.time(),
                 profile=term_profile,
+                stages_seen=stages_seen,
+                source=telem.source or (prev_telem.source if prev_telem else "mqtt"),
             )
 
             if dispensed > 0:
@@ -450,10 +489,272 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self.live_telemetry[machine_id] = telem
         self.async_update_listeners()
 
+    def handle_shadow_update(
+        self, machine_id: str, shadow_doc: dict[str, Any]
+    ) -> None:
+        """Handle real-time AWS IoT Thing Shadow update for physical-dial brews and hardware metrics."""
+        if not self.data or machine_id not in self.data:
+            return
+
+        old_machine = self.data[machine_id]
+        machine = old_machine.with_shadow_doc(shadow_doc)
+        self.data[machine_id] = machine
+
+        prev_status = self._previous_statuses.get(machine_id, old_machine.status.upper())
+        curr_status = machine.status.upper()
+        prev_total_water = self._previous_total_water.get(machine_id, old_machine.total_water_ml)
+        prev_brew_count = self._previous_brew_counts.get(machine_id, old_machine.brew_count)
+
+        mqtt_active = self._mqtt_live_active.get(machine_id, False) and (
+            time.time() - self._last_mqtt_packet_ts.get(machine_id, 0.0) < 15.0
+        )
+        prev_t = self.live_telemetry.get(machine_id)
+        was_brewing = bool(prev_t and prev_t.is_brewing)
+
+        water_delta = (
+            float(machine.total_water_ml - prev_total_water)
+            if (prev_total_water > 0 and machine.total_water_ml > prev_total_water)
+            else 0.0
+        )
+        brew_count_incremented = (
+            prev_brew_count > 0 and machine.brew_count > prev_brew_count
+        )
+
+        changed = (
+            machine != old_machine
+            or curr_status != prev_status
+            or water_delta > 0
+            or brew_count_incremented
+        )
+
+        if not mqtt_active:
+            if curr_status == "HEATING":
+                if not was_brewing or (prev_t and prev_t.stage != "heating"):
+                    self.pre_brew_tank_levels[machine_id] = self.get_estimated_water_level(
+                        machine_id
+                    )
+                    self._brew_start_time[machine_id] = time.time()
+                    self._active_stages_seen[machine_id] = ["heating"]
+                    self._active_brew_profile[machine_id] = [
+                        {
+                            "t": 0.0,
+                            "water": 0.0,
+                            "mass": 0.0,
+                            "temp": int(machine.temperature or (prev_t.temperature if prev_t else 0)),
+                            "flow": 0.0,
+                            "stage": "heating",
+                        }
+                    ]
+                stages_seen = self._record_stage(machine_id, "heating")
+                self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                    stage="heating",
+                    temperature=int(machine.temperature or (prev_t.temperature if prev_t else 0)),
+                    water_output=0.0,
+                    mass_output=0.0,
+                    is_brewing=True,
+                    last_updated=time.time(),
+                    profile=list(self._active_brew_profile.get(machine_id, [])),
+                    stages_seen=stages_seen,
+                    source="shadow",
+                )
+                changed = True
+
+            elif curr_status == "BREWING":
+                if prev_status != "BREWING" or not self._active_polling_brew.get(machine_id, False):
+                    if prev_status != "HEATING":
+                        self.pre_brew_tank_levels[machine_id] = self.get_estimated_water_level(
+                            machine_id
+                        )
+                        self._active_stages_seen[machine_id] = []
+                    self._brew_start_time[machine_id] = time.time()
+                    self._active_polling_brew[machine_id] = True
+                    self._active_brew_profile[machine_id] = [
+                        {
+                            "t": 0.0,
+                            "water": 0.0,
+                            "mass": 0.0,
+                            "temp": int(machine.temperature or 93),
+                            "flow": 0.0,
+                            "stage": "brewing",
+                        }
+                    ]
+
+                stages_seen = self._record_stage(machine_id, "brewing")
+                start_t = self._brew_start_time.setdefault(machine_id, time.time())
+                elapsed = round(max(0.5, time.time() - start_t), 1)
+                flow_rate = float(machine.pump_flow_rate_p1 or 2.75)
+                est_water = (
+                    water_delta
+                    if water_delta > 0
+                    else round(min(250.0, elapsed * flow_rate), 1)
+                )
+                pre_brew = self.pre_brew_tank_levels.get(
+                    machine_id, self.get_estimated_water_level(machine_id)
+                )
+                self.water_tank_levels[machine_id] = max(0.0, pre_brew - est_water)
+                self._unreconciled_brew_volume[machine_id] = est_water
+
+                prof = self._active_brew_profile.setdefault(machine_id, [])
+                temp_val = int(
+                    machine.temperature or (prev_t.temperature if prev_t and prev_t.temperature > 0 else 93)
+                )
+                if not prof or elapsed > prof[-1]["t"]:
+                    prof.append(
+                        {
+                            "t": elapsed,
+                            "water": est_water,
+                            "mass": est_water,
+                            "temp": temp_val,
+                            "flow": round(flow_rate, 1),
+                            "stage": "brewing",
+                        }
+                    )
+
+                self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                    stage="brewing",
+                    temperature=temp_val,
+                    water_output=est_water,
+                    mass_output=est_water,
+                    is_brewing=True,
+                    last_updated=time.time(),
+                    profile=list(prof),
+                    stages_seen=stages_seen,
+                    source="shadow",
+                )
+                changed = True
+
+            elif curr_status == "PURGE":
+                stages_seen = self._record_stage(machine_id, "purge")
+                self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                    stage="purge",
+                    is_brewing=True,
+                    last_updated=time.time(),
+                    stages_seen=stages_seen,
+                    source="shadow",
+                )
+                changed = True
+
+            elif curr_status in ("READY", "IDLE", "ECO", "POWER_OFF"):
+                was_poll_brew = self._active_polling_brew.pop(machine_id, False)
+                unreconciled = self._unreconciled_brew_volume.pop(machine_id, 0.0)
+                live_accounted = self._pending_live_brew_accounted.pop(machine_id, False)
+
+                if (water_delta > 0 or brew_count_incremented) and not live_accounted:
+                    actual_vol = (
+                        water_delta
+                        if water_delta > 0
+                        else (unreconciled if unreconciled > 0 else float(self.get_fallback_brew_volume(machine_id)))
+                    )
+                    pre_brew = self.pre_brew_tank_levels.get(
+                        machine_id, self.get_estimated_water_level(machine_id)
+                    )
+                    self.water_tank_levels[machine_id] = max(0.0, pre_brew - actual_vol)
+                    self.pre_brew_tank_levels[machine_id] = self.water_tank_levels[machine_id]
+                    self.add_lifetime_water_ml(machine_id, actual_vol)
+
+                    final_prof = self._active_brew_profile.pop(machine_id, [])
+                    flow_rate = float(machine.pump_flow_rate_p1 or 2.75)
+                    temp_val = int(
+                        machine.temperature or (prev_t.temperature if prev_t and prev_t.temperature > 0 else 93)
+                    )
+                    if final_prof:
+                        last_w = final_prof[-1]["water"]
+                        if last_w > 0 and abs(last_w - actual_vol) > 0.5:
+                            scale = actual_vol / last_w
+                            for pt in final_prof:
+                                pt["water"] = round(pt["water"] * scale, 1)
+                                pt["mass"] = round(pt["mass"] * scale, 1)
+                        final_prof[-1]["stage"] = "done"
+                    else:
+                        est_dur = round(max(1.0, actual_vol / flow_rate), 1)
+                        final_prof = [
+                            {"t": 0.0, "water": 0.0, "mass": 0.0, "temp": temp_val, "flow": 0.0, "stage": "brewing"},
+                            {"t": est_dur, "water": round(actual_vol, 1), "mass": round(actual_vol, 1), "temp": temp_val, "flow": round(flow_rate, 1), "stage": "done"},
+                        ]
+                    self._last_brew_profile[machine_id] = final_prof
+                    stages_seen = self._record_stage(machine_id, "done")
+                    self._active_stages_seen.pop(machine_id, None)
+
+                    self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                        stage="done",
+                        temperature=temp_val,
+                        water_output=round(actual_vol, 1),
+                        mass_output=round(actual_vol, 1),
+                        bloom_lapse=prev_t.bloom_lapse if prev_t else 0,
+                        is_brewing=False,
+                        last_updated=time.time(),
+                        profile=list(final_prof),
+                        stages_seen=stages_seen,
+                        source="shadow",
+                    )
+                    changed = True
+
+                elif prev_status == "PURGE":
+                    purge_vol = water_delta if water_delta > 0 else float(self.get_purge_volume(machine_id))
+                    self.water_tank_levels[machine_id] = max(
+                        0.0, self.get_estimated_water_level(machine_id) - purge_vol
+                    )
+                    self.pre_brew_tank_levels[machine_id] = self.water_tank_levels[machine_id]
+                    self.add_lifetime_water_ml(machine_id, purge_vol)
+                    stages_seen = self._record_stage(machine_id, "done")
+                    self._active_stages_seen.pop(machine_id, None)
+                    self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                        stage="done",
+                        water_output=round(purge_vol, 1),
+                        is_brewing=False,
+                        last_updated=time.time(),
+                        profile=self._last_brew_profile.get(machine_id, []),
+                        stages_seen=stages_seen,
+                        source="shadow",
+                    )
+                    changed = True
+
+                elif (was_poll_brew or was_brewing) and not brew_count_incremented and water_delta == 0:
+                    # Physical brew/heating canceled before dispensing
+                    if machine_id in self.pre_brew_tank_levels:
+                        self.water_tank_levels[machine_id] = self.pre_brew_tank_levels[machine_id]
+                    self._active_brew_profile.pop(machine_id, None)
+                    self._active_stages_seen.pop(machine_id, None)
+                    self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                        stage="idle",
+                        water_output=0.0,
+                        mass_output=0.0,
+                        temperature=prev_t.temperature if prev_t else 0,
+                        bloom_lapse=0,
+                        is_brewing=False,
+                        last_updated=time.time(),
+                        profile=self._last_brew_profile.get(machine_id, []),
+                        stages_seen=[],
+                        source="shadow",
+                    )
+                    changed = True
+
+        self._previous_statuses[machine_id] = curr_status
+        self._previous_brew_counts[machine_id] = machine.brew_count
+        if machine.total_water_ml > 0:
+            self._previous_total_water[machine_id] = machine.total_water_ml
+
+        if changed:
+            self.async_update_listeners()
+
     async def _async_update_data(self) -> dict[str, MorningMachine]:
         """Fetch latest telemetry and status for all user machines."""
         try:
             machines = await self.client.get_machines()
+
+            if self.iot_listener is not None and hasattr(
+                self.iot_listener, "async_get_thing_shadow"
+            ):
+                enriched_machines: list[MorningMachine] = []
+                for m in machines:
+                    try:
+                        shadow_doc = await self.iot_listener.async_get_thing_shadow(m.id)
+                        if isinstance(shadow_doc, dict) and shadow_doc:
+                            m = m.with_shadow_doc(shadow_doc)
+                    except Exception:
+                        pass
+                    enriched_machines.append(m)
+                machines = enriched_machines
 
             # If tokens were refreshed during requests, persist them to config entry
             if self.client.auth_session:
@@ -563,6 +864,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     and not live_active
                 ):
                     prev_t = self.live_telemetry.get(mid)
+                    self._active_stages_seen[mid] = ["heating"]
                     self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                         stage="heating",
                         temperature=int(
@@ -573,6 +875,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         mass_output=0.0,
                         is_brewing=True,
                         last_updated=time.time(),
+                        stages_seen=["heating"],
+                        source="rest",
                     )
                 elif (
                     curr_status == "BREWING"
@@ -580,6 +884,9 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     and not live_active
                     and not self._active_polling_brew.get(mid, False)
                 ):
+                    if prev_status not in (STATUS_HEATING, "HEATING", "heating"):
+                        self._active_stages_seen[mid] = []
+                    stages_seen = self._record_stage(mid, "brewing")
                     self._active_polling_brew[mid] = True
                     assumed = fallback_vol
                     self._unreconciled_brew_volume[mid] = (
@@ -596,6 +903,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         temperature=prev_t.temperature if prev_t else 0,
                         is_brewing=True,
                         last_updated=time.time(),
+                        stages_seen=stages_seen,
+                        source="rest",
                     )
                     _LOGGER.debug(
                         "Brew started on %s via polling; deducted fallback %.1f ml",
@@ -644,6 +953,16 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
                         # Set sticky telemetry to 'done' for offline polling brew
                         prev_t = self.live_telemetry.get(mid)
+                        stages_seen = self._record_stage(mid, "done")
+                        self._active_stages_seen.pop(mid, None)
+                        if not self._last_brew_profile.get(mid):
+                            flow_rate = float(machine.pump_flow_rate_p1 or 2.75)
+                            temp_val = int(prev_t.temperature if prev_t and prev_t.temperature > 0 else 93)
+                            est_dur = round(max(1.0, assumed / flow_rate), 1)
+                            self._last_brew_profile[mid] = [
+                                {"t": 0.0, "water": 0.0, "mass": 0.0, "temp": temp_val, "flow": 0.0, "stage": "brewing"},
+                                {"t": est_dur, "water": round(assumed, 1), "mass": round(assumed, 1), "temp": temp_val, "flow": round(flow_rate, 1), "stage": "done"},
+                            ]
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
                             water_output=assumed,
@@ -653,13 +972,19 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             is_brewing=False,
                             last_updated=time.time(),
                             profile=self._last_brew_profile.get(mid, []),
+                            stages_seen=stages_seen,
+                            source="rest",
                         )
                         self.add_lifetime_water_ml(mid, assumed)
 
                 # Flow meter delta reconciliation (total_water_ml)
                 prev_total_water = self._previous_total_water.get(mid)
 
-                if prev_total_water is not None and machine.total_water_ml > prev_total_water:
+                if (
+                    prev_total_water is not None
+                    and prev_total_water > 0
+                    and machine.total_water_ml > prev_total_water
+                ):
                     water_delta = float(machine.total_water_ml - prev_total_water)
                     self._active_polling_brew.pop(mid, None)
                     unreconciled = self._unreconciled_brew_volume.pop(mid, 0.0)
@@ -680,6 +1005,13 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             0.0, min(capacity, self.water_tank_levels[mid] + correction)
                         )
                         prev_t = self.live_telemetry.get(mid)
+                        flow_rate = float(machine.pump_flow_rate_p1 or 2.75)
+                        temp_val = int(prev_t.temperature if prev_t and prev_t.temperature > 0 else 93)
+                        est_dur = round(max(1.0, water_delta / flow_rate), 1)
+                        self._last_brew_profile[mid] = [
+                            {"t": 0.0, "water": 0.0, "mass": 0.0, "temp": temp_val, "flow": 0.0, "stage": "brewing"},
+                            {"t": est_dur, "water": round(water_delta, 1), "mass": round(water_delta, 1), "temp": temp_val, "flow": round(flow_rate, 1), "stage": "done"},
+                        ]
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
                             water_output=water_delta,
@@ -689,6 +1021,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             is_brewing=False,
                             last_updated=time.time(),
                             profile=self._last_brew_profile.get(mid, []),
+                            stages_seen=list(prev_t.stages_seen) if prev_t and prev_t.stages_seen else ["brewing", "done"],
+                            source="rest",
                         )
                         _LOGGER.info(
                             "Reconciled fallback brew volume on %s: assumed %.1f ml -> actual %.1f ml (tank level: %.1f ml)",
@@ -722,6 +1056,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             is_brewing=False,
                             last_updated=time.time(),
                             profile=self._last_brew_profile.get(mid, []),
+                            stages_seen=["purge", "done"],
+                            source="rest",
                         )
                 elif prev_status == STATUS_PURGE and curr_status != STATUS_PURGE:
                     purge_vol = float(self.get_purge_volume(mid))
@@ -744,6 +1080,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         is_brewing=False,
                         last_updated=time.time(),
                         profile=self._last_brew_profile.get(mid, []),
+                        stages_seen=["purge", "done"],
+                        source="rest",
                     )
                     self.add_lifetime_water_ml(mid, purge_vol)
 
@@ -766,6 +1104,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                                 capacity, self.get_estimated_water_level(mid) + refund
                             )
                         self._active_brew_profile.pop(mid, None)
+                        self._active_stages_seen.pop(mid, None)
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="idle",
                             water_output=0.0,
@@ -775,6 +1114,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             is_brewing=False,
                             last_updated=time.time(),
                             profile=self._last_brew_profile.get(mid, []),
+                            stages_seen=[],
+                            source="rest",
                         )
                     elif prev_t and prev_t.is_brewing:
                         final_prof = self._active_brew_profile.pop(
@@ -782,6 +1123,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         )
                         if final_prof:
                             self._last_brew_profile[mid] = final_prof
+                        stages_seen = self._record_stage(mid, "done")
+                        self._active_stages_seen.pop(mid, None)
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
                             water_output=prev_t.water_output,
@@ -791,6 +1134,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             is_brewing=False,
                             last_updated=time.time(),
                             profile=self._last_brew_profile.get(mid, []),
+                            stages_seen=stages_seen,
+                            source=prev_t.source or "rest",
                         )
                 elif curr_status != "BREWING":
                     self._active_polling_brew.pop(mid, None)
@@ -799,7 +1144,8 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     self._previous_water_levels[mid] = curr_level_status
                 self._previous_brew_counts[mid] = machine.brew_count
                 self._previous_statuses[mid] = curr_status
-                self._previous_total_water[mid] = machine.total_water_ml
+                if machine.total_water_ml > 0 or mid not in self._previous_total_water:
+                    self._previous_total_water[mid] = machine.total_water_ml
 
             return machine_dict
 

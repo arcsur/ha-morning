@@ -1,6 +1,6 @@
 {
   "name": "ha-morning",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Home Assistant integration and Lovelace UI card for Morning Machine",
   "type": "module",
   "scripts": {

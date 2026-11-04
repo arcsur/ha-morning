@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.4.5";
+const CARD_VERSION = "1.4.6";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -344,6 +344,15 @@ class MorningCoffeeCard extends HTMLElement {
           border-color: #2ecc71;
           background: #2ecc71;
           color: #fff;
+        }
+        .step.skipped .step-circle {
+          border-style: dashed;
+          border-color: rgba(255, 255, 255, 0.25);
+          background: transparent;
+          color: var(--secondary-text-color, #777);
+        }
+        .step.skipped .step-label {
+          opacity: 0.55;
         }
         .step-label {
           font-size: 0.7rem;
@@ -974,6 +983,12 @@ class MorningCoffeeCard extends HTMLElement {
           </div>
         `;
       }
+      const stageStateForStepper = this._getState("brew_stage");
+      const rawStagesSeen = stageStateForStepper?.attributes?.stages_seen;
+      const stagesSeen = Array.isArray(rawStagesSeen)
+        ? rawStagesSeen.map((s) => String(s).toLowerCase())
+        : null;
+
       const stepperHtml = isPurgeCycle
         ? `
           <div class="stepper">
@@ -992,12 +1007,25 @@ class MorningCoffeeCard extends HTMLElement {
           <div class="stepper">
             <div class="stepper-line"></div>
             ${STAGE_ORDER.map((stepName, idx) => {
-              const isPassed = currentStepIndex > idx || (!isBrewing && stage === "done");
               const isActive = currentStepIndex === idx && isBrewing;
-              const cls = isActive ? "step active" : isPassed ? "step passed" : "step";
+              const isPriorOrDone = currentStepIndex > idx || (!isBrewing && stage === "done");
+              const wasSeen =
+                stagesSeen && stagesSeen.length > 0
+                  ? stagesSeen.includes(stepName) || (stepName === "done" && stage === "done")
+                  : true;
+              const isPassed = !isActive && isPriorOrDone && wasSeen;
+              const isSkipped = !isActive && isPriorOrDone && !wasSeen;
+              const cls = isActive
+                ? "step active"
+                : isPassed
+                ? "step passed"
+                : isSkipped
+                ? "step skipped"
+                : "step";
+              const circleContent = isPassed ? "✓" : isSkipped ? "–" : idx + 1;
               return `
                 <div class="${cls}">
-                  <div class="step-circle">${isPassed ? "✓" : idx + 1}</div>
+                  <div class="step-circle">${circleContent}</div>
                   <div class="step-label">${stepName}</div>
                 </div>
               `;

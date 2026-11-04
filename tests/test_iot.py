@@ -9,7 +9,9 @@ from custom_components.morning.iot import (
     MorningIotListener,
     decode_brew_progress_payload,
     decode_mqtt_publish,
+    decode_mqtt_publish_packet,
     encode_mqtt_connect,
+    encode_mqtt_puback,
     encode_mqtt_subscribe,
     sign_iot_websocket_url,
     sign_sigv4_headers,
@@ -88,6 +90,25 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         dec_topic, dec_payload = decoded
         self.assertEqual(dec_topic, topic)
         self.assertEqual(dec_payload, payload)
+
+        # Test QoS 1 PUBLISH packet (0x32) with 2-byte Packet Identifier (0x002A = 42)
+        packet_id = 42
+        qos1_body = struct.pack("!H", len(topic_bytes)) + topic_bytes + struct.pack("!H", packet_id) + payload
+        qos1_data = bytes([0x32, len(qos1_body)]) + qos1_body
+        dec_q1 = decode_mqtt_publish_packet(qos1_data)
+        self.assertIsNotNone(dec_q1)
+        q1_topic, q1_payload, q1_pid = dec_q1
+        self.assertEqual(q1_topic, topic)
+        self.assertEqual(q1_payload, payload)
+        self.assertEqual(q1_pid, 42)
+
+        # decode_mqtt_publish also strips QoS 1 packet identifier cleanly
+        dec_q1_compat = decode_mqtt_publish(qos1_data)
+        self.assertEqual(dec_q1_compat, (topic, payload))
+
+        # Test PUBACK encoding
+        puback = encode_mqtt_puback(42)
+        self.assertEqual(puback, bytes([0x40, 0x02, 0x00, 42]))
 
     def test_decode_brew_progress_payload(self):
         """Test parsing live brew telemetry dictionary."""
@@ -193,6 +214,23 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         topic_shadow = "$aws/things/M_123/shadow/update/accepted"
         mid_shadow = listener._resolve_machine_id(topic_shadow)
         self.assertEqual(mid_shadow, "M_123")
+
+        # Match by payload machineId on mobile app random UUID response topic
+        mobile_topic = "PROD/user/phone_identity_999/random_uuid_abc/response"
+        mid_mobile = listener._resolve_machine_id(
+            mobile_topic,
+            payload_dict={"machineId": "M_123", "name": "BrewCoffee.Response"},
+            own_identity_id="ha_identity_111",
+        )
+        self.assertEqual(mid_mobile, "M_123")
+
+        # Reject foreign machine on wildcard topic
+        mid_foreign = listener._resolve_machine_id(
+            mobile_topic,
+            payload_dict={"machineId": "M_FOREIGN_999", "name": "BrewCoffee.Response"},
+            own_identity_id="ha_identity_111",
+        )
+        self.assertIsNone(mid_foreign)
 
     def test_decode_purge_payload(self):
         """Test decoding purge status messages from various MQTT payload formats."""

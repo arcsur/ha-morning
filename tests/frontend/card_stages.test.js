@@ -146,4 +146,45 @@ describe("MorningCoffeeCard Stage Progression & Transitions", () => {
     const badge = card.shadowRoot.querySelector(".extraction-badge");
     expect(badge.classList.contains("live")).toBe(true);
   });
+
+  it("marks skipped stages as skipped (–) instead of passed (✓) when stages_seen omits heating or blooming", () => {
+    // Case 1: Brew jumps straight to brewing (stages_seen = ["brewing"])
+    const directBrewing = JSON.parse(JSON.stringify(brewingStates));
+    directBrewing["sensor.kitchen_dagusmorning_brew_stage"].state = "brewing";
+    directBrewing["sensor.kitchen_dagusmorning_brew_stage"].attributes.stages_seen = ["brewing"];
+    card.hass = { states: directBrewing };
+
+    let steps = card.shadowRoot.querySelectorAll(".step");
+    expect(steps[0].classList.contains("skipped")).toBe(true);
+    expect(steps[0].classList.contains("passed")).toBe(false);
+    expect(steps[0].querySelector(".step-circle").textContent.trim()).toBe("–");
+
+    expect(steps[1].classList.contains("skipped")).toBe(true);
+    expect(steps[1].classList.contains("passed")).toBe(false);
+    expect(steps[1].querySelector(".step-circle").textContent.trim()).toBe("–");
+
+    expect(steps[2].classList.contains("active")).toBe(true);
+    expect(steps[2].querySelector(".step-circle").textContent.trim()).toBe("3");
+
+    // Case 2: Physical brew with heating -> brewing -> done (no blooming)
+    const physicalDone = JSON.parse(JSON.stringify(doneStates));
+    physicalDone["sensor.kitchen_dagusmorning_brew_stage"].state = "done";
+    physicalDone["sensor.kitchen_dagusmorning_brew_stage"].attributes.stages_seen = [
+      "heating",
+      "brewing",
+      "done",
+    ];
+    card.hass = { states: physicalDone };
+
+    steps = card.shadowRoot.querySelectorAll(".step");
+    expect(steps[0].classList.contains("passed")).toBe(true);
+    expect(steps[0].querySelector(".step-circle").textContent.trim()).toBe("✓");
+
+    expect(steps[1].classList.contains("skipped")).toBe(true);
+    expect(steps[1].classList.contains("passed")).toBe(false);
+    expect(steps[1].querySelector(".step-circle").textContent.trim()).toBe("–");
+
+    expect(steps[2].classList.contains("passed")).toBe(true);
+    expect(steps[3].classList.contains("passed")).toBe(true);
+  });
 });
