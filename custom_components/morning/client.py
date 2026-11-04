@@ -367,7 +367,7 @@ class MorningClient:
         """Fetch recently brewed recipes from Morning Cloud."""
         _LOGGER.debug("Fetching recent recipes")
         try:
-            data = await self._request("GET", "user/recipes/recent", params={"pageSize": page_size, "from": ""})
+            data = await self._request("GET", "user/recipes/recent", params={"pageSize": page_size})
             if isinstance(data, list):
                 return [MorningRecipe.from_api_json(item, source="recent") for item in data if isinstance(item, dict)]
         except Exception as err:
