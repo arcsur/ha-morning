@@ -664,8 +664,8 @@ class MorningLifetimeWaterSensor(MorningEntity, RestoreSensor):
     def native_value(self) -> float | None:
         """Return cumulative liters pumped."""
         ml = self.coordinator.get_lifetime_water_ml(self._machine_id)
-        if ml == 0.0 and self.machine and self.machine.total_water_ml > 0:
-            return round(self.machine.total_water_ml / 1000.0, 2)
+        if self.machine and self.machine.total_water_ml > ml:
+            ml = float(self.machine.total_water_ml)
         return round(ml / 1000.0, 2)
 
 

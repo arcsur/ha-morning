@@ -397,9 +397,23 @@ class MorningIotListener:
         self.is_connected = False
         self._task: asyncio.Task | None = None
         self._shadow_task: asyncio.Task | None = None
+        self._shadow_session: aiohttp.ClientSession | None = None
         self._identity_id: str | None = None
         self._credentials: dict[str, str] | None = None
         self._creds_obtained_at: float = 0.0
+
+    def _evict_iot_pool(self) -> None:
+        """Close pooled keep-alive REST sockets to AWS_IOT_ENDPOINT before WebSocket upgrade."""
+        connector = getattr(self.session, "connector", None)
+        conns = getattr(connector, "_conns", None)
+        if isinstance(conns, dict):
+            for key in list(conns.keys()):
+                if getattr(key, "host", None) == AWS_IOT_ENDPOINT:
+                    for handler, _ in conns.pop(key, []):
+                        try:
+                            handler.close()
+                        except Exception:
+                            pass
 
     def start(self) -> None:
         """Start listener background tasks."""
@@ -425,6 +439,9 @@ class MorningIotListener:
                     pass
         self._task = None
         self._shadow_task = None
+        if self._shadow_session is not None and not self._shadow_session.closed:
+            await self._shadow_session.close()
+        self._shadow_session = None
         _LOGGER.debug("Stopped Morning IoT telemetry background listener")
 
     def _resolve_machine_id(
@@ -558,7 +575,12 @@ class MorningIotListener:
             credentials=creds,
         )
         try:
-            async with self.session.get(
+            shadow_sess = self.session
+            if isinstance(self.session, aiohttp.ClientSession):
+                if self._shadow_session is None or self._shadow_session.closed:
+                    self._shadow_session = aiohttp.ClientSession()
+                shadow_sess = self._shadow_session
+            async with shadow_sess.get(
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)
             ) as resp:
                 if resp.status == 200:
@@ -637,6 +659,7 @@ class MorningIotListener:
                 )
 
                 _LOGGER.debug("Connecting to AWS IoT WebSocket endpoint...")
+                self._evict_iot_pool()
                 async with self.session.ws_connect(
                     ws_url,
                     protocols=["mqtt"],
@@ -667,6 +690,8 @@ class MorningIotListener:
                         raise RuntimeError(f"MQTT broker rejected connection: return_code={connack_rc}")
 
                     self.is_connected = True
+                    if self.coordinator and hasattr(self.coordinator, "async_update_listeners"):
+                        self.coordinator.async_update_listeners()
                     _LOGGER.info("MQTT session accepted by broker (CONNACK return_code=0)")
 
                     # Subscribe to topics with QoS 1
