@@ -79,6 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
         "coordinator": coordinator,
         "iot_listener": iot_listener,
+        "options": dict(entry.options),
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -164,5 +165,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload Morning config entry when options change."""
+    """Reload Morning config entry only when options change (not on token refresh)."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if entry_data is not None:
+        current_options = dict(entry.options)
+        if entry_data.get("options") == current_options:
+            return
+        entry_data["options"] = current_options
     await hass.config_entries.async_reload(entry.entry_id)

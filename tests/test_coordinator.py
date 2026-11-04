@@ -572,6 +572,62 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telem.mass_output, 40.0)
         self.assertEqual(telem.temperature, 92)
 
+    async def test_live_brew_cancel_resets_to_idle_and_reconciles_water(self):
+        """Test that canceling a brew resets stage to idle and refunds unconsumed water."""
+        mock_machine = MorningMachine.from_dict(
+            {"id": "M_123", "name": "My Morning", "status": "IDLE", "waterLevel": "NORMAL", "brewCount": 10}
+        )
+        self.client.get_machines = AsyncMock(return_value=[mock_machine])
+        await self.coordinator._async_update_data()
+        initial_water = self.coordinator.get_estimated_water_level("M_123")
+
+        # Start heating -> brewing via live IoT
+        self.coordinator.handle_live_brew_update(
+            "M_123",
+            MorningLiveBrewTelemetry(
+                stage="heating", temperature=90, water_output=0.0, mass_output=0.0, is_brewing=True
+            ),
+        )
+        # Cancel before any water dispensed
+        self.coordinator.handle_live_brew_update(
+            "M_123",
+            MorningLiveBrewTelemetry(
+                stage="cancel", temperature=90, water_output=0.0, mass_output=0.0, is_brewing=False
+            ),
+        )
+
+        telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(telem.stage, "idle")
+        self.assertFalse(telem.is_brewing)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), initial_water)
+
+    async def test_polling_brew_cancel_refunds_fallback_volume_and_resets_idle(self):
+        """Test that a polling BREWING -> IDLE transition without brew count/water delta refunds fallback."""
+        mock_machine = MorningMachine.from_dict(
+            {"id": "M_123", "name": "My Morning", "status": "IDLE", "waterLevel": "NORMAL", "brewCount": 10}
+        )
+        self.client.get_machines = AsyncMock(return_value=[mock_machine])
+        await self.coordinator._async_update_data()
+        initial_water = self.coordinator.get_estimated_water_level("M_123")
+
+        # Poll 1: Machine enters BREWING (offline fallback deducts 50 mL)
+        brewing_machine = MorningMachine.from_dict(
+            {"id": "M_123", "name": "My Morning", "status": "BREWING", "waterLevel": "NORMAL", "brewCount": 10}
+        )
+        self.client.get_machines = AsyncMock(return_value=[brewing_machine])
+        await self.coordinator._async_update_data()
+        self.assertEqual(self.coordinator.live_telemetry["M_123"].stage, "brewing")
+        self.assertTrue(self.coordinator.live_telemetry["M_123"].is_brewing)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), initial_water - 50.0)
+
+        # Poll 2: User canceled brew -> machine returns to IDLE without brew_count or total_water_ml increment
+        self.client.get_machines = AsyncMock(return_value=[mock_machine])
+        await self.coordinator._async_update_data()
+        telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(telem.stage, "idle")
+        self.assertFalse(telem.is_brewing)
+        self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), initial_water)
+
 
 if __name__ == "__main__":
     unittest.main()

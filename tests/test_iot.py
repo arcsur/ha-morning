@@ -263,6 +263,35 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t.mass_output, 35.0)
         self.assertEqual(t.temperature, 92)
 
+    def test_decode_blooming_and_cancel_payloads(self):
+        """Test decoding active blooming and cancel messages."""
+        bloom_p = {
+            "data": {
+                "progress": {
+                    "status": "BREWING",
+                    "waterOutput": 0.0,
+                    "massOutput": 2.0,
+                    "temperature": 93,
+                    "bloomLapse": 4,
+                }
+            }
+        }
+        tb = decode_brew_progress_payload(bloom_p)
+        self.assertIsNotNone(tb)
+        self.assertEqual(tb.stage, "blooming")
+        self.assertTrue(tb.is_brewing)
+
+        for cancel_p in (
+            {"data": {"progress": {"status": "cancel", "waterOutput": 0.0, "massOutput": 0.0}}},
+            {"data": {"status": "CANCEL"}},
+            {"state": {"reported": {"settings": {"status": "cancelled"}}}},
+            {"status": "abort"},
+        ):
+            tc = decode_brew_progress_payload(cancel_p)
+            self.assertIsNotNone(tc)
+            self.assertEqual(tc.stage, "cancel")
+            self.assertFalse(tc.is_brewing)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -253,7 +253,13 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
         temperature = int(prog.get("temperature") or 0)
         stage_str = str(prog.get("status") or "brewing").lower()
         bloom_lapse = int(prog.get("bloomLapse") or 0)
-        is_brewing = stage_str not in ("done", "cancel", "cancelled", "error", "water_low", "idle")
+        if stage_str in ("cancel", "cancelled", "canceled", "abort", "aborted"):
+            stage_str = "cancel"
+        elif stage_str in ("bloom", "blooming", "prewet") or (
+            stage_str == "brewing" and bloom_lapse > 0 and raw_water == 0.0
+        ):
+            stage_str = "blooming"
+        is_brewing = stage_str not in ("done", "cancel", "error", "water_low", "idle", "ready", "eco")
 
         # Morning Machine: waterOutput is bypass water, massOutput is extracted espresso.
         # Total water drawn from the reservoir is bypass water + extraction mass.
@@ -269,8 +275,7 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
             last_updated=time.time(),
         )
 
-    if isinstance(data, dict):
-        status_val = str(data.get("status") or "").lower()
+    def _status_to_telemetry(status_val: str, temp_val: int = 0) -> MorningLiveBrewTelemetry | None:
         if status_val == "purge":
             return MorningLiveBrewTelemetry(
                 stage="purge",
@@ -282,12 +287,6 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
                 last_updated=time.time(),
             )
         if status_val in ("heating", "preheating", "warming"):
-            temp_val = int(
-                data.get("temperature")
-                or data.get("current_temp")
-                or data.get("current_temperature")
-                or 0
-            )
             return MorningLiveBrewTelemetry(
                 stage="heating",
                 temperature=temp_val,
@@ -297,6 +296,39 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
                 is_brewing=True,
                 last_updated=time.time(),
             )
+        if status_val in ("cancel", "cancelled", "canceled", "abort", "aborted"):
+            return MorningLiveBrewTelemetry(
+                stage="cancel",
+                temperature=0,
+                water_output=0.0,
+                mass_output=0.0,
+                bloom_lapse=0,
+                is_brewing=False,
+                last_updated=time.time(),
+            )
+        if status_val in ("done", "ready", "idle", "eco"):
+            return MorningLiveBrewTelemetry(
+                stage=status_val,
+                temperature=0,
+                water_output=0.0,
+                mass_output=0.0,
+                bloom_lapse=0,
+                is_brewing=False,
+                last_updated=time.time(),
+            )
+        return None
+
+    if isinstance(data, dict):
+        status_val = str(data.get("status") or "").lower()
+        temp_val = int(
+            data.get("temperature")
+            or data.get("current_temp")
+            or data.get("current_temperature")
+            or 0
+        )
+        matched = _status_to_telemetry(status_val, temp_val)
+        if matched is not None:
+            return matched
 
     # Check for shadow reported status
     state = payload_dict.get("state")
@@ -305,78 +337,21 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
         if isinstance(reported, dict):
             settings = reported.get("settings", reported)
             status_val = str(settings.get("status") or "").lower()
-            if status_val == "purge":
-                return MorningLiveBrewTelemetry(
-                    stage="purge",
-                    temperature=0,
-                    water_output=0.0,
-                    mass_output=0.0,
-                    bloom_lapse=0,
-                    is_brewing=True,
-                    last_updated=time.time(),
-                )
-            if status_val in ("heating", "preheating", "warming"):
-                temp_val = int(
-                    settings.get("temperature")
-                    or settings.get("current_temp")
-                    or settings.get("current_temperature")
-                    or reported.get("temperature")
-                    or 0
-                )
-                return MorningLiveBrewTelemetry(
-                    stage="heating",
-                    temperature=temp_val,
-                    water_output=0.0,
-                    mass_output=0.0,
-                    bloom_lapse=0,
-                    is_brewing=True,
-                    last_updated=time.time(),
-                )
-            if status_val in ("ready", "idle", "eco"):
-                return MorningLiveBrewTelemetry(
-                    stage=status_val,
-                    temperature=0,
-                    water_output=0.0,
-                    mass_output=0.0,
-                    bloom_lapse=0,
-                    is_brewing=False,
-                    last_updated=time.time(),
-                )
-            return None
+            temp_val = int(
+                settings.get("temperature")
+                or settings.get("current_temp")
+                or settings.get("current_temperature")
+                or reported.get("temperature")
+                or 0
+            )
+            return _status_to_telemetry(status_val, temp_val)
 
     # Check top-level status
     status_val = str(payload_dict.get("status") or "").lower()
-    if status_val == "purge":
-        return MorningLiveBrewTelemetry(
-            stage="purge",
-            temperature=0,
-            water_output=0.0,
-            mass_output=0.0,
-            bloom_lapse=0,
-            is_brewing=True,
-            last_updated=time.time(),
-        )
-    if status_val in ("heating", "preheating", "warming"):
-        temp_val = int(payload_dict.get("temperature") or 0)
-        return MorningLiveBrewTelemetry(
-            stage="heating",
-            temperature=temp_val,
-            water_output=0.0,
-            mass_output=0.0,
-            bloom_lapse=0,
-            is_brewing=True,
-            last_updated=time.time(),
-        )
-    if status_val in ("ready", "idle", "eco"):
-        return MorningLiveBrewTelemetry(
-            stage=status_val,
-            temperature=0,
-            water_output=0.0,
-            mass_output=0.0,
-            bloom_lapse=0,
-            is_brewing=False,
-            last_updated=time.time(),
-        )
+    temp_val = int(payload_dict.get("temperature") or 0)
+    matched = _status_to_telemetry(status_val, temp_val)
+    if matched is not None:
+        return matched
 
     return None
 
@@ -542,31 +517,25 @@ class MorningIotListener:
                     backoff = 5  # Reset backoff on successful connect
                     _LOGGER.info("Connected to Morning AWS IoT live telemetry stream")
 
-                    # Send MQTT CONNECT
-                    cid = f"ha_morning_{identity_id.split(':')[-1][:8]}"
+                    # Send MQTT CONNECT with unique client_id to avoid collision on reconnect
+                    cid = f"ha_morning_{identity_id.split(':')[-1][:8]}_{int(time.time() * 1000) % 100000}"
                     _LOGGER.debug("Sending MQTT CONNECT packet with cid=%s", cid)
                     await ws.send_bytes(encode_mqtt_connect(cid))
 
                     # Await CONNACK
                     connack_msg = await ws.receive()
                     if connack_msg.type != aiohttp.WSMsgType.BINARY:
-                        _LOGGER.warning(
-                            "MQTT CONNECT failed; unexpected message type: %s (code=%s, extra=%s)",
-                            connack_msg.type,
-                            ws.close_code,
-                            connack_msg.extra,
+                        raise RuntimeError(
+                            f"MQTT CONNECT failed; unexpected message type: {connack_msg.type} (code={ws.close_code}, extra={connack_msg.extra})"
                         )
-                        break
 
                     connack_data = connack_msg.data
                     if len(connack_data) < 4 or connack_data[0] != 0x20:
-                        _LOGGER.warning("MQTT invalid CONNACK packet: %s", list(connack_data))
-                        break
+                        raise RuntimeError(f"MQTT invalid CONNACK packet: {list(connack_data)}")
 
                     connack_rc = connack_data[3]
                     if connack_rc != 0:
-                        _LOGGER.warning("MQTT broker rejected connection: return_code=%d", connack_rc)
-                        break
+                        raise RuntimeError(f"MQTT broker rejected connection: return_code={connack_rc}")
 
                     _LOGGER.info("MQTT session accepted by broker (CONNACK return_code=0)")
 
@@ -581,10 +550,14 @@ class MorningIotListener:
 
                     last_ping = time.time()
                     while self._running and not ws.closed:
+                        if time.time() - last_ping >= 25:
+                            await ws.send_bytes(b"\xc0\x00")  # PINGREQ
+                            last_ping = time.time()
+
                         try:
                             msg = await asyncio.wait_for(ws.receive(), timeout=15)
                         except TimeoutError:
-                            if time.time() - last_ping >= 30:
+                            if time.time() - last_ping >= 25:
                                 await ws.send_bytes(b"\xc0\x00")  # PINGREQ
                                 last_ping = time.time()
                             continue

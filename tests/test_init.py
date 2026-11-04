@@ -72,7 +72,15 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             mock_reg.assert_called_once_with(self.hass)
 
     async def test_reload_entry(self):
-        """Test reload entry callback."""
+        """Test reload entry callback only reloads when options change."""
+        self.hass.data = {"morning": {self.entry.entry_id: {"options": {}}}}
+        # Unchanged options (e.g. token refresh updating entry.data) -> no reload
+        self.entry.options = {}
+        await async_reload_entry(self.hass, self.entry)
+        self.hass.config_entries.async_reload.assert_not_called()
+
+        # Changed options -> reloads
+        self.entry.options = {"tank_capacity": 1000}
         await async_reload_entry(self.hass, self.entry)
         self.hass.config_entries.async_reload.assert_called_once_with(self.entry.entry_id)
 
@@ -88,7 +96,7 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             await _async_register_frontend(self.hass)
             self.assertTrue(self.hass.data.get("morning_frontend_registered"))
             self.hass.http.async_register_static_paths.assert_called_once()
-            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.3")
+            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.4")
 
             # Second call should be a no-op due to idempotency guard
             await _async_register_frontend(self.hass)

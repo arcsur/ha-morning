@@ -205,6 +205,28 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
         await temp_sensor.async_added_to_hass()
         self.assertEqual(temp_sensor.native_value, 93)
 
+    def test_status_sensor_reflects_live_iot_and_cancel_states(self):
+        """Test status sensor immediately reflects active IoT stages and cancel reset."""
+        import time
+
+        from custom_components.morning.models import MorningLiveBrewTelemetry
+        from custom_components.morning.sensor import MorningStatusSensor
+
+        status_sensor = MorningStatusSensor(self.coordinator, "M_123")
+        # Machine shadow is still ECO, but live IoT heating starts
+        self.coordinator.data["M_123"] = dataclasses.replace(self.machine, status="ECO")
+        self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(
+            stage="heating", is_brewing=True, last_updated=time.time()
+        )
+        self.assertEqual(status_sensor.native_value, "heating")
+
+        # Machine shadow was BREWING, then user cancels via live IoT (stage='idle', is_brewing=False)
+        self.coordinator.data["M_123"] = dataclasses.replace(self.machine, status="BREWING")
+        self.coordinator.live_telemetry["M_123"] = MorningLiveBrewTelemetry(
+            stage="idle", is_brewing=False, last_updated=time.time()
+        )
+        self.assertEqual(status_sensor.native_value, "idle")
+
     async def test_async_setup_entry(self):
         """Test async_setup_entry adds all expected sensors."""
         hass = MagicMock()

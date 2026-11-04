@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -111,13 +112,19 @@ class MorningStatusSensor(MorningEntity, SensorEntity):
         """Return the current machine status."""
         if not self.machine:
             return None
-        telem = self.coordinator.live_telemetry.get(self._machine_id)
-        if telem and telem.stage == "done" and not telem.is_brewing:
-            # If brew completed but machine shadow still reports 'brewing'
-            # (e.g. waiting for capsule release or prompt dismissal), report 'done'
-            if self.machine.status.lower() == "brewing":
-                return "done"
-        return self.machine.status.lower()
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
+        raw_status = self.machine.status.lower()
+        if telem:
+            is_fresh = telem.last_updated > 0 and (time.time() - telem.last_updated) < 60.0
+            if telem.is_brewing and is_fresh:
+                if telem.stage == "heating":
+                    return "heating"
+                if telem.stage == "purge":
+                    return "purge"
+                return "brewing"
+            if not telem.is_brewing and raw_status in ("brewing", "heating", "purge"):
+                return "done" if telem.stage == "done" else "idle"
+        return raw_status
 
     @property
     def icon(self) -> str:
@@ -417,7 +424,7 @@ class MorningBrewWaterDispensedSensor(MorningEntity, RestoreSensor):
     @property
     def native_value(self) -> float | None:
         """Return live water output if brewing or last brew final output."""
-        telem = self.coordinator.live_telemetry.get(self._machine_id)
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
         if telem is not None:
             return round(telem.water_output, 1)
         return self._restored_val
@@ -472,7 +479,7 @@ class MorningBrewMassDispensedSensor(MorningEntity, RestoreSensor):
     @property
     def native_value(self) -> float | None:
         """Return live mass output if brewing or last brew final output."""
-        telem = self.coordinator.live_telemetry.get(self._machine_id)
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
         if telem is not None:
             return round(telem.mass_output, 1)
         return self._restored_val
@@ -519,7 +526,7 @@ class MorningBrewTemperatureSensor(MorningEntity, RestoreSensor):
     @property
     def native_value(self) -> int | None:
         """Return brew temperature."""
-        telem = self.coordinator.live_telemetry.get(self._machine_id)
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
         if telem and telem.temperature > 0:
             return telem.temperature
         return self._restored_val
@@ -555,7 +562,7 @@ class MorningBrewStageSensor(MorningEntity, RestoreSensor):
     @property
     def native_value(self) -> str | None:
         """Return current or sticky brew stage."""
-        telem = self.coordinator.live_telemetry.get(self._machine_id)
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
         if telem:
             return telem.stage.lower()
         return "idle"
@@ -592,7 +599,7 @@ class MorningBrewBloomSensor(MorningEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         """Return bloom duration in seconds."""
-        telem = self.coordinator.live_telemetry.get(self._machine_id)
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
         if telem:
             return telem.bloom_lapse
         return 0

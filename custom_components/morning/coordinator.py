@@ -204,9 +204,52 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         prev_telem = self.live_telemetry.get(machine_id)
         was_brewing = prev_telem.is_brewing if prev_telem else False
 
+        # If a polling fallback brew was active, refund its assumed volume now that live IoT arrived
+        if self._active_polling_brew.pop(machine_id, False):
+            refund = self._unreconciled_brew_volume.pop(machine_id, 0.0)
+            if refund > 0:
+                capacity = float(self.get_tank_capacity(machine_id))
+                restored = min(capacity, self.get_estimated_water_level(machine_id) + refund)
+                self.water_tank_levels[machine_id] = restored
+                self.pre_brew_tank_levels[machine_id] = restored
+
+        # Handle explicit cancel / abort from machine immediately
+        if telem.stage in ("cancel", "cancelled", "canceled", "abort", "aborted"):
+            dispensed = telem.water_output if telem.water_output > 0 else telem.mass_output
+            if dispensed == 0 and prev_telem and prev_telem.is_brewing:
+                dispensed = (
+                    prev_telem.water_output
+                    if prev_telem.water_output > 0
+                    else prev_telem.mass_output
+                )
+            if machine_id in self.pre_brew_tank_levels:
+                pre_brew = self.pre_brew_tank_levels.pop(machine_id)
+                self.water_tank_levels[machine_id] = max(0.0, pre_brew - dispensed)
+            if dispensed > 0:
+                self.add_lifetime_water_ml(machine_id, dispensed)
+            self._active_brew_profile.pop(machine_id, None)
+            self._pending_live_brew_accounted[machine_id] = True
+            self._last_live_brew_time[machine_id] = time.time()
+            self._last_live_brew_volume[machine_id] = dispensed
+            self.live_telemetry[machine_id] = MorningLiveBrewTelemetry(
+                stage="idle",
+                temperature=telem.temperature or (prev_telem.temperature if prev_telem else 0),
+                water_output=dispensed,
+                mass_output=telem.mass_output or (prev_telem.mass_output if prev_telem else 0.0),
+                bloom_lapse=telem.bloom_lapse or (prev_telem.bloom_lapse if prev_telem else 0),
+                is_brewing=False,
+                last_updated=time.time(),
+                profile=self._last_brew_profile.get(machine_id, []),
+            )
+            self.async_update_listeners()
+            return
+
         # Ignore passive shadow reports (ready/idle/eco) unless actively finishing a brew/purge
         if not telem.is_brewing and telem.stage in ("ready", "idle", "eco"):
             if not was_brewing:
+                if prev_telem and prev_telem.stage in ("cancel", "cancelled"):
+                    prev_telem.stage = "idle"
+                    self.async_update_listeners()
                 return
             # Machine was active and now returned to idle/ready/eco
             final_prof = self._active_brew_profile.pop(
@@ -264,6 +307,18 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
         # While brewing, record real-time extraction curve profile
         if telem.is_brewing:
+            # Promote 'brewing' to 'blooming' while bloom_lapse timer is actively incrementing
+            if (
+                telem.stage == "brewing"
+                and telem.bloom_lapse > 0
+                and (
+                    prev_telem is None
+                    or telem.bloom_lapse > prev_telem.bloom_lapse
+                    or telem.water_output <= 5.0
+                )
+            ):
+                telem.stage = "blooming"
+
             # Preserve temperature if current packet has 0 but prev had valid temperature
             if telem.temperature <= 0 and prev_telem and prev_telem.temperature > 0:
                 telem.temperature = prev_telem.temperature
@@ -606,6 +661,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
                 if prev_total_water is not None and machine.total_water_ml > prev_total_water:
                     water_delta = float(machine.total_water_ml - prev_total_water)
+                    self._active_polling_brew.pop(mid, None)
                     unreconciled = self._unreconciled_brew_volume.pop(mid, 0.0)
                     self.add_lifetime_water_ml(mid, water_delta)
 
@@ -700,9 +756,27 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     "ECO",
                     "POWER_OFF",
                 ):
-                    self._active_polling_brew.pop(mid, None)
+                    was_unreconciled_poll_brew = self._active_polling_brew.pop(mid, False)
                     prev_t = self.live_telemetry.get(mid)
-                    if prev_t and prev_t.is_brewing:
+                    if was_unreconciled_poll_brew and not brew_count_incremented:
+                        # Polling brew ended without brew_count or flow meter increment -> canceled!
+                        refund = self._unreconciled_brew_volume.pop(mid, 0.0)
+                        if refund > 0:
+                            self.water_tank_levels[mid] = min(
+                                capacity, self.get_estimated_water_level(mid) + refund
+                            )
+                        self._active_brew_profile.pop(mid, None)
+                        self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                            stage="idle",
+                            water_output=0.0,
+                            mass_output=0.0,
+                            temperature=prev_t.temperature if prev_t else 0,
+                            bloom_lapse=0,
+                            is_brewing=False,
+                            last_updated=time.time(),
+                            profile=self._last_brew_profile.get(mid, []),
+                        )
+                    elif prev_t and prev_t.is_brewing:
                         final_prof = self._active_brew_profile.pop(
                             mid, self._last_brew_profile.get(mid, [])
                         )

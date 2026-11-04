@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -150,6 +152,9 @@ class MorningBrewingBinarySensor(MorningEntity, BinarySensorEntity):
         """Return True if machine is currently brewing."""
         if not self.machine:
             return None
+        telem = getattr(self.coordinator, "live_telemetry", {}).get(self._machine_id)
+        if telem and telem.last_updated > 0 and (time.time() - telem.last_updated) < 60.0:
+            return bool(telem.is_brewing and telem.stage in ("heating", "blooming", "brewing"))
         return self.machine.status.upper() == STATUS_BREWING
 
     @property

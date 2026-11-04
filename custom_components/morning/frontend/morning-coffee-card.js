@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.4.3";
+const CARD_VERSION = "1.4.4";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -834,15 +834,21 @@ class MorningCoffeeCard extends HTMLElement {
     let bloomDuration = this._getValue("brew_bloom", "0");
 
     const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
-    const isHeating = rawStatus === "heating";
-    const isPurge = rawStatus === "purge" || stage === "purge";
-    const isBrewing = (rawStatus === "brewing" || isHeating || isPurge) && stage !== "done";
-    const displayStatus = (rawStatus === "brewing" && stage === "done")
-      ? "done"
+    const isTerminalOrIdleStage = ["done", "cancel", "cancelled", "canceled", "abort", "idle", "ready", "eco"].includes(stage);
+    const isHeating = (rawStatus === "heating" || stage === "heating") && !isTerminalOrIdleStage;
+    const isPurge = (rawStatus === "purge" || stage === "purge") && !isTerminalOrIdleStage;
+    const isBrewing =
+      (["heating", "blooming", "brewing", "purge"].includes(stage) ||
+        ["heating", "brewing", "purge"].includes(rawStatus)) &&
+      !isTerminalOrIdleStage;
+    const displayStatus = (rawStatus === "brewing" && isTerminalOrIdleStage)
+      ? (stage === "done" ? "done" : "idle")
       : isPurge
       ? (isBrewing ? "purge" : "done")
       : isHeating
       ? "heating"
+      : isBrewing
+      ? "brewing"
       : rawStatus;
 
     const isPurgeCycle = isPurge || (stage === "done" && brewTemp === "--" && massDispensed === 0 && waterDispensed > 0);
