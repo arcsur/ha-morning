@@ -288,13 +288,22 @@ class MorningEstimatedWaterLevelSensor(MorningEntity, RestoreSensor):
         """Restore state on startup if not already seeded."""
         await super().async_added_to_hass()
         if not self.coordinator._water_level_seeded.get(self._machine_id, False):
+            restored_val = None
             last_sensor_data = await self.async_get_last_sensor_data()
             if last_sensor_data and last_sensor_data.native_value is not None:
                 try:
                     restored_val = float(last_sensor_data.native_value)
-                    self.coordinator.set_estimated_water_level(self._machine_id, restored_val)
                 except (ValueError, TypeError):
                     pass
+            if restored_val is None:
+                last_state = await self.async_get_last_state()
+                if last_state and last_state.state not in ("unknown", "unavailable"):
+                    try:
+                        restored_val = float(last_state.state)
+                    except (ValueError, TypeError):
+                        pass
+            if restored_val is not None:
+                self.coordinator.set_estimated_water_level(self._machine_id, restored_val)
 
     @property
     def native_value(self) -> float | None:
@@ -314,7 +323,7 @@ class MorningEstimatedWaterLevelSensor(MorningEntity, RestoreSensor):
         }
 
 
-class MorningWaterTankPercentageSensor(MorningEntity, SensorEntity):
+class MorningWaterTankPercentageSensor(MorningEntity, RestoreSensor):
     """Sensor tracking water level as a percentage of tank capacity."""
 
     def __init__(
@@ -333,6 +342,30 @@ class MorningWaterTankPercentageSensor(MorningEntity, SensorEntity):
             native_unit_of_measurement=PERCENTAGE,
         )
         self._attr_unique_id = f"{machine_id}_water_tank_percentage"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore state on startup if not already seeded."""
+        await super().async_added_to_hass()
+        if not self.coordinator._water_level_seeded.get(self._machine_id, False):
+            restored_pct = None
+            last_sensor_data = await self.async_get_last_sensor_data()
+            if last_sensor_data and last_sensor_data.native_value is not None:
+                try:
+                    restored_pct = float(last_sensor_data.native_value)
+                except (ValueError, TypeError):
+                    pass
+            if restored_pct is None:
+                last_state = await self.async_get_last_state()
+                if last_state and last_state.state not in ("unknown", "unavailable"):
+                    try:
+                        restored_pct = float(last_state.state)
+                    except (ValueError, TypeError):
+                        pass
+            if restored_pct is not None:
+                capacity = float(self.coordinator.get_tank_capacity(self._machine_id))
+                if capacity > 0:
+                    restored_ml = round((restored_pct / 100.0) * capacity, 1)
+                    self.coordinator.set_estimated_water_level(self._machine_id, restored_ml)
 
     @property
     def native_value(self) -> float | None:
@@ -373,6 +406,13 @@ class MorningBrewWaterDispensedSensor(MorningEntity, RestoreSensor):
                 self._restored_val = float(last_data.native_value)
             except (ValueError, TypeError):
                 pass
+        if self._restored_val is None:
+            last_state = await self.async_get_last_state()
+            if last_state and last_state.state not in ("unknown", "unavailable"):
+                try:
+                    self._restored_val = float(last_state.state)
+                except (ValueError, TypeError):
+                    pass
 
     @property
     def native_value(self) -> float | None:
@@ -421,6 +461,13 @@ class MorningBrewMassDispensedSensor(MorningEntity, RestoreSensor):
                 self._restored_val = float(last_data.native_value)
             except (ValueError, TypeError):
                 pass
+        if self._restored_val is None:
+            last_state = await self.async_get_last_state()
+            if last_state and last_state.state not in ("unknown", "unavailable"):
+                try:
+                    self._restored_val = float(last_state.state)
+                except (ValueError, TypeError):
+                    pass
 
     @property
     def native_value(self) -> float | None:
@@ -431,7 +478,7 @@ class MorningBrewMassDispensedSensor(MorningEntity, RestoreSensor):
         return self._restored_val
 
 
-class MorningBrewTemperatureSensor(MorningEntity, SensorEntity):
+class MorningBrewTemperatureSensor(MorningEntity, RestoreSensor):
     """Sensor tracking temperature during brew."""
 
     def __init__(
@@ -450,6 +497,24 @@ class MorningBrewTemperatureSensor(MorningEntity, SensorEntity):
             native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         )
         self._attr_unique_id = f"{machine_id}_brew_temperature"
+        self._restored_val: int | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore previous brew reading."""
+        await super().async_added_to_hass()
+        last_data = await self.async_get_last_sensor_data()
+        if last_data and last_data.native_value is not None:
+            try:
+                self._restored_val = int(last_data.native_value)
+            except (ValueError, TypeError):
+                pass
+        if self._restored_val is None:
+            last_state = await self.async_get_last_state()
+            if last_state and last_state.state not in ("unknown", "unavailable"):
+                try:
+                    self._restored_val = int(float(last_state.state))
+                except (ValueError, TypeError):
+                    pass
 
     @property
     def native_value(self) -> int | None:
@@ -457,7 +522,7 @@ class MorningBrewTemperatureSensor(MorningEntity, SensorEntity):
         telem = self.coordinator.live_telemetry.get(self._machine_id)
         if telem and telem.temperature > 0:
             return telem.temperature
-        return None
+        return self._restored_val
 
 
 class MorningBrewStageSensor(MorningEntity, RestoreSensor):

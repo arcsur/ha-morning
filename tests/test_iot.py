@@ -217,6 +217,52 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t3.stage, "purge")
         self.assertTrue(t3.is_brewing)
 
+    def test_decode_heating_payload(self):
+        """Test decoding heating stage messages across payload formats."""
+        # Format 1: data.status
+        p1 = {"data": {"status": "HEATING", "temperature": 93}}
+        t1 = decode_brew_progress_payload(p1)
+        self.assertIsNotNone(t1)
+        self.assertEqual(t1.stage, "heating")
+        self.assertTrue(t1.is_brewing)
+        self.assertEqual(t1.temperature, 93)
+
+        # Format 2: shadow reported state
+        p2 = {"state": {"reported": {"settings": {"status": "heating", "temperature": 91}}}}
+        t2 = decode_brew_progress_payload(p2)
+        self.assertIsNotNone(t2)
+        self.assertEqual(t2.stage, "heating")
+        self.assertTrue(t2.is_brewing)
+        self.assertEqual(t2.temperature, 91)
+
+        # Format 3: top-level status
+        p3 = {"status": "HEATING", "temperature": 88}
+        t3 = decode_brew_progress_payload(p3)
+        self.assertIsNotNone(t3)
+        self.assertEqual(t3.stage, "heating")
+        self.assertTrue(t3.is_brewing)
+        self.assertEqual(t3.temperature, 88)
+
+    def test_decode_direct_telemetry_payload(self):
+        """Test decoding telemetry when data contains progress directly without nested progress dict."""
+        p = {
+            "name": "BrewCoffee.Progress",
+            "data": {
+                "status": "BREWING",
+                "waterOutput": 40.0,
+                "massOutput": 35.0,
+                "temperature": 92,
+                "bloomLapse": 5,
+            },
+        }
+        t = decode_brew_progress_payload(p)
+        self.assertIsNotNone(t)
+        self.assertEqual(t.stage, "brewing")
+        self.assertTrue(t.is_brewing)
+        self.assertAlmostEqual(t.water_output, 75.0)
+        self.assertEqual(t.mass_output, 35.0)
+        self.assertEqual(t.temperature, 92)
+
 
 if __name__ == "__main__":
     unittest.main()

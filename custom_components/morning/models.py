@@ -85,6 +85,7 @@ class MorningMachine:
     fault_information: str | None = None
     pump_flow_rate_k1: float | None = None
     pump_flow_rate_p1: float | None = None
+    temperature: int | None = None
     raw_data: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -140,6 +141,11 @@ class MorningMachine:
             fault_information=data.get("faultInfomation") or data.get("faultInformation"),
             pump_flow_rate_k1=k1,
             pump_flow_rate_p1=p1,
+            temperature=(
+                int(data.get("temperature") or data.get("currentTemp") or data.get("current_temp") or 0)
+                if (data.get("temperature") or data.get("currentTemp") or data.get("current_temp"))
+                else None
+            ),
             raw_data=data,
         )
 

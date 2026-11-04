@@ -2,7 +2,7 @@
 
 import dataclasses
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.morning.coordinator import MorningDataUpdateCoordinator
 from custom_components.morning.models import MorningLiveBrewTelemetry, MorningMachine
@@ -179,6 +179,31 @@ class TestMorningSensors(unittest.IsolatedAsyncioTestCase):
 
         fault_sensor = MorningFaultCodeSensor(self.coordinator, "M_123")
         self.assertEqual(fault_sensor.native_value, "NO_ERROR")
+
+    async def test_water_level_sensor_restore_from_last_state(self):
+        """Test water level restores from async_get_last_state when sensor data is None."""
+        sensor = MorningEstimatedWaterLevelSensor(self.coordinator, "M_123")
+        sensor.coordinator._water_level_seeded = {}
+        sensor.async_get_last_sensor_data = AsyncMock(return_value=None)
+
+        last_state = MagicMock()
+        last_state.state = "511.0"
+        sensor.async_get_last_state = AsyncMock(return_value=last_state)
+
+        await sensor.async_added_to_hass()
+        self.coordinator.set_estimated_water_level.assert_called_once_with("M_123", 511.0)
+
+    async def test_brew_temperature_sensor_restore_from_last_state(self):
+        """Test brew temperature sensor restores from last state when idle."""
+        temp_sensor = MorningBrewTemperatureSensor(self.coordinator, "M_123")
+        temp_sensor.async_get_last_sensor_data = AsyncMock(return_value=None)
+
+        last_state = MagicMock()
+        last_state.state = "93"
+        temp_sensor.async_get_last_state = AsyncMock(return_value=last_state)
+
+        await temp_sensor.async_added_to_hass()
+        self.assertEqual(temp_sensor.native_value, 93)
 
     async def test_async_setup_entry(self):
         """Test async_setup_entry adds all expected sensors."""

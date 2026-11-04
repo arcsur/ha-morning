@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_PURGE_VOLUME,
     DEFAULT_TANK_CAPACITY,
     DOMAIN,
+    STATUS_HEATING,
     STATUS_PURGE,
     WATER_LEVEL_LOW,
     WATER_LEVEL_NORMAL,
@@ -136,6 +137,7 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self.water_tank_levels[machine_id] = clamped
         self.pre_brew_tank_levels[machine_id] = clamped
         self._water_level_seeded[machine_id] = True
+        self.async_update_listeners()
 
     def get_lifetime_water_ml(self, machine_id: str) -> float:
         """Return cumulative lifetime water pumped in ml."""
@@ -259,6 +261,10 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
         # While brewing, record real-time extraction curve profile
         if telem.is_brewing:
+            # Preserve temperature if current packet has 0 but prev had valid temperature
+            if telem.temperature <= 0 and prev_telem and prev_telem.temperature > 0:
+                telem.temperature = prev_telem.temperature
+
             start_t = self._brew_start_time.setdefault(machine_id, time.time())
             elapsed = round(max(0.0, time.time() - start_t), 1)
             prof = self._active_brew_profile.setdefault(machine_id, [])
@@ -341,18 +347,44 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     profile=self._last_brew_profile.get(machine_id, []),
                 )
 
-            # Preserve previous final values if terminal packet had 0
-            if telem.water_output == 0 and prev_telem and prev_telem.water_output > 0:
-                telem = MorningLiveBrewTelemetry(
-                    stage=telem.stage if telem.stage not in ("", "idle") else "done",
-                    temperature=telem.temperature or prev_telem.temperature,
-                    water_output=prev_telem.water_output,
-                    mass_output=prev_telem.mass_output,
-                    bloom_lapse=telem.bloom_lapse or prev_telem.bloom_lapse,
-                    is_brewing=False,
-                    last_updated=time.time(),
-                    profile=self._last_brew_profile.get(machine_id, []),
-                )
+            # Preserve previous final values if terminal packet had 0 (Terminal Packet Guard)
+            term_water = (
+                telem.water_output
+                if telem.water_output > 0
+                else (prev_telem.water_output if prev_telem else 0.0)
+            )
+            term_mass = (
+                telem.mass_output
+                if telem.mass_output > 0
+                else (prev_telem.mass_output if prev_telem else 0.0)
+            )
+            term_temp = (
+                telem.temperature
+                if telem.temperature > 0
+                else (prev_telem.temperature if prev_telem else 0)
+            )
+            term_bloom = (
+                telem.bloom_lapse
+                if telem.bloom_lapse > 0
+                else (prev_telem.bloom_lapse if prev_telem else 0)
+            )
+            term_stage = telem.stage if telem.stage not in ("", "idle") else "done"
+            term_profile = telem.profile or (
+                prev_telem.profile
+                if prev_telem
+                else self._last_brew_profile.get(machine_id, [])
+            )
+
+            telem = MorningLiveBrewTelemetry(
+                stage=term_stage,
+                temperature=term_temp,
+                water_output=term_water,
+                mass_output=term_mass,
+                bloom_lapse=term_bloom,
+                is_brewing=False,
+                last_updated=time.time(),
+                profile=term_profile,
+            )
 
             if dispensed > 0:
                 self.add_lifetime_water_ml(machine_id, dispensed)
@@ -466,8 +498,25 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     self.water_tank_levels[mid] = capacity
                     self.pre_brew_tank_levels[mid] = capacity
 
-                # Polling fallback: detect active brewing start if live stream not connected
+                # Polling fallback: detect active heating/brewing start if live stream not connected
                 if (
+                    curr_status in (STATUS_HEATING, "HEATING", "heating")
+                    and prev_status not in (STATUS_HEATING, "HEATING", "heating")
+                    and not live_active
+                ):
+                    prev_t = self.live_telemetry.get(mid)
+                    self.live_telemetry[mid] = MorningLiveBrewTelemetry(
+                        stage="heating",
+                        temperature=int(
+                            getattr(machine, "temperature", 0)
+                            or (prev_t.temperature if prev_t else 0)
+                        ),
+                        water_output=0.0,
+                        mass_output=0.0,
+                        is_brewing=True,
+                        last_updated=time.time(),
+                    )
+                elif (
                     curr_status == "BREWING"
                     and prev_status != "BREWING"
                     and not live_active
@@ -481,9 +530,12 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     self.water_tank_levels[mid] = max(
                         0.0, self.get_estimated_water_level(mid) - assumed
                     )
+                    prev_t = self.live_telemetry.get(mid)
                     self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                         stage="brewing",
                         water_output=assumed,
+                        mass_output=prev_t.mass_output if prev_t else 0.0,
+                        temperature=prev_t.temperature if prev_t else 0,
                         is_brewing=True,
                         last_updated=time.time(),
                     )
@@ -533,11 +585,16 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                             )
 
                         # Set sticky telemetry to 'done' for offline polling brew
+                        prev_t = self.live_telemetry.get(mid)
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
                             water_output=assumed,
+                            mass_output=prev_t.mass_output if prev_t else 0.0,
+                            temperature=prev_t.temperature if prev_t else 0,
+                            bloom_lapse=prev_t.bloom_lapse if prev_t else 0,
                             is_brewing=False,
                             last_updated=time.time(),
+                            profile=self._last_brew_profile.get(mid, []),
                         )
                         self.add_lifetime_water_ml(mid, assumed)
 
@@ -563,11 +620,16 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         self.water_tank_levels[mid] = max(
                             0.0, min(capacity, self.water_tank_levels[mid] + correction)
                         )
+                        prev_t = self.live_telemetry.get(mid)
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
                             water_output=water_delta,
+                            mass_output=prev_t.mass_output if prev_t else 0.0,
+                            temperature=prev_t.temperature if prev_t else 0,
+                            bloom_lapse=prev_t.bloom_lapse if prev_t else 0,
                             is_brewing=False,
                             last_updated=time.time(),
+                            profile=self._last_brew_profile.get(mid, []),
                         )
                         _LOGGER.info(
                             "Reconciled fallback brew volume on %s: assumed %.1f ml -> actual %.1f ml (tank level: %.1f ml)",
@@ -591,11 +653,16 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                         self.water_tank_levels[mid] = max(
                             0.0, self.get_estimated_water_level(mid) - water_delta
                         )
+                        prev_t = self.live_telemetry.get(mid)
                         self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                             stage="done",
                             water_output=water_delta,
+                            mass_output=prev_t.mass_output if prev_t else 0.0,
+                            temperature=prev_t.temperature if prev_t else 0,
+                            bloom_lapse=prev_t.bloom_lapse if prev_t else 0,
                             is_brewing=False,
                             last_updated=time.time(),
+                            profile=self._last_brew_profile.get(mid, []),
                         )
                 elif prev_status == STATUS_PURGE and curr_status != STATUS_PURGE:
                     purge_vol = float(self.get_purge_volume(mid))
@@ -608,11 +675,16 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                     self.water_tank_levels[mid] = max(
                         0.0, self.get_estimated_water_level(mid) - purge_vol
                     )
+                    prev_t = self.live_telemetry.get(mid)
                     self.live_telemetry[mid] = MorningLiveBrewTelemetry(
                         stage="done",
                         water_output=purge_vol,
+                        mass_output=prev_t.mass_output if prev_t else 0.0,
+                        temperature=prev_t.temperature if prev_t else 0,
+                        bloom_lapse=prev_t.bloom_lapse if prev_t else 0,
                         is_brewing=False,
                         last_updated=time.time(),
+                        profile=self._last_brew_profile.get(mid, []),
                     )
                     self.add_lifetime_water_ml(mid, purge_vol)
 

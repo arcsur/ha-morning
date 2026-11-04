@@ -496,6 +496,52 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         retained = self.coordinator.get_brew_profile("M_123")
         self.assertEqual(retained, final_prof)
 
+    async def test_terminal_packet_guard_independent_temperature_preservation(self):
+        """Test terminal packet with temperature=0 preserves peak temperature."""
+        # Active brew packet with temperature 94
+        t_active = MorningLiveBrewTelemetry(
+            stage="brewing",
+            is_brewing=True,
+            water_output=50.0,
+            mass_output=45.0,
+            temperature=94,
+        )
+        self.coordinator.handle_live_brew_update("M_123", t_active)
+
+        # Terminal packet with temperature=0 and non-zero water
+        t_terminal = MorningLiveBrewTelemetry(
+            stage="done",
+            is_brewing=False,
+            water_output=80.0,
+            mass_output=75.0,
+            temperature=0,  # Zeroed in terminal hardware packet
+        )
+        self.coordinator.handle_live_brew_update("M_123", t_terminal)
+
+        final_telem = self.coordinator.live_telemetry["M_123"]
+        self.assertEqual(final_telem.temperature, 94)
+        self.assertEqual(final_telem.water_output, 80.0)
+        self.assertEqual(final_telem.mass_output, 75.0)
+
+    async def test_polling_heating_detection(self):
+        """Test REST polling detects HEATING machine status."""
+        self.coordinator._previous_statuses["M_123"] = "READY"
+        m_heating = MorningMachine.from_dict({
+            "id": "M_123",
+            "waterLevel": "NORMAL",
+            "brewCount": 10,
+            "status": "HEATING",
+            "temperature": 85,
+        })
+        self.client.get_machines = AsyncMock(return_value=[m_heating])
+        await self.coordinator._async_update_data()
+
+        telem = self.coordinator.live_telemetry.get("M_123")
+        self.assertIsNotNone(telem)
+        self.assertEqual(telem.stage, "heating")
+        self.assertTrue(telem.is_brewing)
+        self.assertEqual(telem.temperature, 85)
+
 
 if __name__ == "__main__":
     unittest.main()

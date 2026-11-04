@@ -225,35 +225,72 @@ def decode_mqtt_publish(data: bytes) -> tuple[str, bytes] | None:
 def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBrewTelemetry | None:
     """Extract MorningLiveBrewTelemetry from an incoming MQTT JSON message."""
     data = payload_dict.get("data")
+    prog = None
     if isinstance(data, dict):
-        progress = data.get("progress")
-        if isinstance(progress, dict):
-            raw_water = float(progress.get("waterOutput") or progress.get("water_output") or 0.0)
-            raw_mass = float(progress.get("massOutput") or progress.get("mass_output") or 0.0)
-            temperature = int(progress.get("temperature") or 0)
-            stage_str = str(progress.get("status") or "brewing").lower()
-            bloom_lapse = int(progress.get("bloomLapse") or 0)
-            is_brewing = stage_str not in ("done", "cancel", "cancelled", "error", "water_low", "idle")
-
-            # Morning Machine: waterOutput is bypass water, massOutput is extracted espresso.
-            # Total water drawn from the reservoir is bypass water + extraction mass.
-            water_dispensed = (raw_water + raw_mass) if (raw_water > 0 or raw_mass > 0) else 0.0
-
-            return MorningLiveBrewTelemetry(
-                stage=stage_str,
-                temperature=temperature,
-                water_output=water_dispensed,
-                mass_output=raw_mass,
-                bloom_lapse=bloom_lapse,
-                is_brewing=is_brewing,
-                last_updated=time.time(),
+        if isinstance(data.get("progress"), dict):
+            prog = data["progress"]
+        elif any(
+            k in data
+            for k in (
+                "waterOutput",
+                "water_output",
+                "massOutput",
+                "mass_output",
+                "bloomLapse",
+                "temperature",
             )
+        ):
+            prog = data
+    elif any(
+        k in payload_dict
+        for k in ("waterOutput", "water_output", "massOutput", "mass_output", "bloomLapse")
+    ):
+        prog = payload_dict
 
+    if isinstance(prog, dict):
+        raw_water = float(prog.get("waterOutput") or prog.get("water_output") or 0.0)
+        raw_mass = float(prog.get("massOutput") or prog.get("mass_output") or 0.0)
+        temperature = int(prog.get("temperature") or 0)
+        stage_str = str(prog.get("status") or "brewing").lower()
+        bloom_lapse = int(prog.get("bloomLapse") or 0)
+        is_brewing = stage_str not in ("done", "cancel", "cancelled", "error", "water_low", "idle")
+
+        # Morning Machine: waterOutput is bypass water, massOutput is extracted espresso.
+        # Total water drawn from the reservoir is bypass water + extraction mass.
+        water_dispensed = (raw_water + raw_mass) if (raw_water > 0 or raw_mass > 0) else 0.0
+
+        return MorningLiveBrewTelemetry(
+            stage=stage_str,
+            temperature=temperature,
+            water_output=water_dispensed,
+            mass_output=raw_mass,
+            bloom_lapse=bloom_lapse,
+            is_brewing=is_brewing,
+            last_updated=time.time(),
+        )
+
+    if isinstance(data, dict):
         status_val = str(data.get("status") or "").lower()
         if status_val == "purge":
             return MorningLiveBrewTelemetry(
                 stage="purge",
                 temperature=0,
+                water_output=0.0,
+                mass_output=0.0,
+                bloom_lapse=0,
+                is_brewing=True,
+                last_updated=time.time(),
+            )
+        if status_val in ("heating", "preheating", "warming"):
+            temp_val = int(
+                data.get("temperature")
+                or data.get("current_temp")
+                or data.get("current_temperature")
+                or 0
+            )
+            return MorningLiveBrewTelemetry(
+                stage="heating",
+                temperature=temp_val,
                 water_output=0.0,
                 mass_output=0.0,
                 bloom_lapse=0,
@@ -278,6 +315,23 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
                     is_brewing=True,
                     last_updated=time.time(),
                 )
+            if status_val in ("heating", "preheating", "warming"):
+                temp_val = int(
+                    settings.get("temperature")
+                    or settings.get("current_temp")
+                    or settings.get("current_temperature")
+                    or reported.get("temperature")
+                    or 0
+                )
+                return MorningLiveBrewTelemetry(
+                    stage="heating",
+                    temperature=temp_val,
+                    water_output=0.0,
+                    mass_output=0.0,
+                    bloom_lapse=0,
+                    is_brewing=True,
+                    last_updated=time.time(),
+                )
             if status_val in ("ready", "idle", "eco"):
                 return MorningLiveBrewTelemetry(
                     stage=status_val,
@@ -296,6 +350,17 @@ def decode_brew_progress_payload(payload_dict: dict[str, Any]) -> MorningLiveBre
         return MorningLiveBrewTelemetry(
             stage="purge",
             temperature=0,
+            water_output=0.0,
+            mass_output=0.0,
+            bloom_lapse=0,
+            is_brewing=True,
+            last_updated=time.time(),
+        )
+    if status_val in ("heating", "preheating", "warming"):
+        temp_val = int(payload_dict.get("temperature") or 0)
+        return MorningLiveBrewTelemetry(
+            stage="heating",
+            temperature=temp_val,
             water_output=0.0,
             mass_output=0.0,
             bloom_lapse=0,

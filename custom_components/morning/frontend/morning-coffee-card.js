@@ -95,7 +95,11 @@ class MorningCoffeeCard extends HTMLElement {
         this._resolvedEntities.status !== this._config.entity ||
         !this._resolvedEntities.total_brews ||
         !this._resolvedEntities.water_level ||
-        !this._resolvedEntities.lifetime_water;
+        !this._resolvedEntities.lifetime_water ||
+        !this._resolvedEntities.brew_water ||
+        !this._resolvedEntities.brew_mass ||
+        !this._resolvedEntities.brew_temp ||
+        !this._resolvedEntities.brew_stage;
       if (needsResolve) {
         this._resolveEntities();
       }
@@ -822,23 +826,27 @@ class MorningCoffeeCard extends HTMLElement {
     const waterLevelMl = Number.isFinite(rawWaterMl) ? rawWaterMl : 850;
     const rawWaterPct = parseFloat(this._getValue("water_pct", "100"));
     const waterLevelPct = Number.isFinite(rawWaterPct) ? rawWaterPct : 100;
-    const rawWaterDisp = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
-    const waterDispensed = Number.isFinite(rawWaterDisp) ? rawWaterDisp : 0.0;
-    const rawMassDisp = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
-    const massDispensed = Number.isFinite(rawMassDisp) ? rawMassDisp : 0.0;
-    const brewTemp = this._getValue("brew_temp", "--");
-    const bloomDuration = this._getValue("brew_bloom", "0");
+    let rawWaterDisp = parseFloat(this._getValue("brew_water", "0.0") || "0.0");
+    let waterDispensed = Number.isFinite(rawWaterDisp) ? rawWaterDisp : 0.0;
+    let rawMassDisp = parseFloat(this._getValue("brew_mass", "0.0") || "0.0");
+    let massDispensed = Number.isFinite(rawMassDisp) ? rawMassDisp : 0.0;
+    let brewTemp = this._getValue("brew_temp", "--");
+    let bloomDuration = this._getValue("brew_bloom", "0");
 
     const stage = (this._getValue("brew_stage", "idle") || "idle").toLowerCase();
+    const isHeating = stage === "heating" || rawStatus === "heating";
     const isPurge = stage === "purge" || rawStatus === "purge";
-    const isBrewing = (rawStatus === "brewing" && stage !== "done")
+    const isBrewing = isHeating
+      || (rawStatus === "brewing" && stage !== "done")
       || (rawStatus === "purge")
       || (stage === "purge")
-      || (stage === "brewing" || stage === "heating" || stage === "blooming");
+      || (stage === "brewing" || stage === "blooming");
     const displayStatus = (rawStatus === "brewing" && stage === "done")
       ? "done"
       : isPurge
       ? (isBrewing ? "purge" : "done")
+      : isHeating
+      ? "heating"
       : rawStatus;
 
     const isPurgeCycle = isPurge || (stage === "done" && brewTemp === "--" && massDispensed === 0 && waterDispensed > 0);
@@ -847,7 +855,9 @@ class MorningCoffeeCard extends HTMLElement {
     const statusBg = `${statusColor}22`;
 
     let currentStepIndex = STAGE_ORDER.indexOf(stage);
-    if (currentStepIndex === -1) {
+    if (isHeating) {
+      currentStepIndex = 0;
+    } else if (currentStepIndex === -1) {
       currentStepIndex = isBrewing ? 2 : stage === "done" ? 3 : -1;
     }
 
@@ -901,6 +911,20 @@ class MorningCoffeeCard extends HTMLElement {
           waterState?.attributes?.extraction_profile;
         let profile = Array.isArray(rawProfile) ? rawProfile.slice() : [];
 
+        // Fallback: sync metrics with latest profile point if sensor values lag or zero out
+        const latestPt = profile && profile.length > 0 ? profile[profile.length - 1] : null;
+        if (latestPt) {
+          if (waterDispensed <= 0 && Number(latestPt.water) > 0) {
+            waterDispensed = Number(latestPt.water);
+          }
+          if (massDispensed <= 0 && Number(latestPt.mass) > 0) {
+            massDispensed = Number(latestPt.mass);
+          }
+          if ((brewTemp === "--" || brewTemp === "unknown") && Number(latestPt.temp) > 0) {
+            brewTemp = String(latestPt.temp);
+          }
+        }
+
         if (isBrewing) {
           if (!this._activeProfileBuffer || !this._wasBrewing) {
             this._activeProfileBuffer = [];
@@ -940,7 +964,9 @@ class MorningCoffeeCard extends HTMLElement {
               stage: stage,
             });
           }
-          if (profile.length < this._activeProfileBuffer.length) {
+          const backendYields = profile.map((p) => Math.max(Number(p.water) || 0, Number(p.mass) || 0));
+          const maxBackendYield = backendYields.length > 0 ? Math.max(...backendYields) : 0;
+          if (profile.length < this._activeProfileBuffer.length && maxBackendYield === 0) {
             profile = this._activeProfileBuffer;
           }
         } else {
@@ -949,7 +975,11 @@ class MorningCoffeeCard extends HTMLElement {
             this._activeProfileBuffer &&
             this._activeProfileBuffer.length > 0
           ) {
-            this._lastCompletedProfile = this._activeProfileBuffer;
+            const localYields = this._activeProfileBuffer.map((p) => Math.max(Number(p.water) || 0, Number(p.mass) || 0));
+            const maxLocalYield = localYields.length > 0 ? Math.max(...localYields) : 0;
+            if (maxLocalYield > 0) {
+              this._lastCompletedProfile = this._activeProfileBuffer;
+            }
             this._activeProfileBuffer = [];
           }
           if (profile.length === 0 && this._lastCompletedProfile) {
