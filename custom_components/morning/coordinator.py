@@ -155,7 +155,13 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
     def get_lifetime_water_ml(self, machine_id: str) -> float:
         """Return cumulative lifetime water pumped in ml."""
-        return self.lifetime_water_levels.get(machine_id, 0.0)
+        val = self.lifetime_water_levels.get(machine_id, 0.0)
+        if self.data and isinstance(self.data, dict) and machine_id in self.data:
+            hw_ml = float(getattr(self.data[machine_id], "total_water_ml", 0) or 0)
+            if hw_ml > val:
+                self.lifetime_water_levels[machine_id] = hw_ml
+                return hw_ml
+        return val
 
     def set_lifetime_water_ml(self, machine_id: str, volume_ml: float) -> None:
         """Seed or restore lifetime water level in ml."""
@@ -485,6 +491,17 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
 
             if dispensed > 0:
                 self.add_lifetime_water_ml(machine_id, dispensed)
+        elif not was_brewing and not telem.is_brewing and telem.stage == "done":
+            if prev_telem and prev_telem.stage == "done" and (time.time() - prev_telem.last_updated) < 10.0:
+                return
+            if not telem.stages_seen:
+                telem.stages_seen = (
+                    list(prev_telem.stages_seen)
+                    if (prev_telem and prev_telem.stages_seen)
+                    else ["brewing", "done"]
+                )
+            if not telem.profile:
+                telem.profile = self._last_brew_profile.get(machine_id, [])
 
         self.live_telemetry[machine_id] = telem
         self.async_update_listeners()

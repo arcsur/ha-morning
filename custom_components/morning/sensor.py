@@ -149,9 +149,9 @@ class MorningStatusSensor(MorningEntity, SensorEntity):
             "active": self.machine.active,
             "recipe_slots": self.machine.recipe_slots,
             "child_lock": self.machine.child_lock,
-            "total_water_ml": (
-                self.coordinator.get_lifetime_water_ml(self._machine_id)
-                or self.machine.total_water_ml
+            "total_water_ml": max(
+                self.coordinator.get_lifetime_water_ml(self._machine_id),
+                self.machine.total_water_ml,
             ),
             "stm32_version": self.machine.stm32_version,
             "fault_information": self.machine.fault_information,

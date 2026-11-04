@@ -727,6 +727,23 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(final_prof), 2)
         self.assertEqual(final_prof[-1]["water"], 42.0)
 
+        # Duplicate DONE packet arriving within 10s must not wipe stages_seen or profile
+        self.coordinator.handle_live_brew_update(
+            "M_123",
+            MorningLiveBrewTelemetry(
+                stage="done",
+                is_brewing=False,
+                water_output=42.0,
+                mass_output=42.0,
+                temperature=93,
+                source="mqtt",
+            ),
+        )
+        self.assertEqual(
+            self.coordinator.live_telemetry["M_123"].stages_seen,
+            ["heating", "brewing", "done"],
+        )
+
     async def test_shadow_physical_brew_cancel_resets_to_idle(self):
         """Test physical brew canceled via Thing Shadow refunds water and resets to idle."""
         m_initial = MorningMachine.from_dict(

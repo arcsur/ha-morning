@@ -696,7 +696,6 @@ class MorningIotListener:
 
                     # Subscribe to topics with QoS 1
                     sub_topics = [
-                        f"PROD/user/{identity_id}/#",
                         "PROD/user/+/+/response",
                         "PROD/user/+/+/status",
                     ]
