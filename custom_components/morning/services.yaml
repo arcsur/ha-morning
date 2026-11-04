@@ -109,3 +109,141 @@ record_purge:
           max: 500
           step: 5
           unit_of_measurement: mL
+
+brew_recipe:
+  name: Brew Recipe
+  description: Initiates coffee extraction on the Morning Coffee Machine using a named profile or custom pressure curve.
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID.
+      selector:
+        text:
+    profile_id:
+      name: Profile ID / Name
+      description: ID or name of a profile to recall.
+      selector:
+        text:
+    name:
+      name: Recipe Name
+      description: Custom recipe display name.
+      selector:
+        text:
+    temperature:
+      name: Temperature (°C)
+      description: Brew temperature in Celsius.
+      selector:
+        number:
+          min: 65
+          max: 100
+          step: 1
+          unit_of_measurement: "°C"
+    mass_output:
+      name: Coffee Output (g)
+      description: Target espresso output weight in grams.
+      selector:
+        number:
+          min: 10
+          max: 250
+          step: 1
+          unit_of_measurement: g
+    water_output:
+      name: Bypass Water (ml)
+      description: Additional bypass water volume in ml.
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          unit_of_measurement: mL
+    bloom_duration:
+      name: Bloom Duration (s)
+      description: Pre-wet infusion duration in seconds.
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 1
+          unit_of_measurement: s
+
+cancel_brew:
+  name: Cancel Brew
+  description: Cancels ongoing extraction or heating cycle on the Morning Coffee Machine.
+  fields:
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
+    machine_id:
+      name: Machine ID
+      description: Internal hardware machine ID.
+      selector:
+        text:
+
+search_recipes:
+  name: Search Recipes
+  description: Searches Morning Cloud and partner roaster recipe catalogs.
+  fields:
+    query:
+      name: Search Query
+      description: Roaster name, bean name, or flavor keyword.
+      required: true
+      selector:
+        text:
+    page_size:
+      name: Page Size
+      description: Maximum number of results to return.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+
+save_profile:
+  name: Save Custom Profile
+  description: Saves a named custom brew profile to local storage.
+  fields:
+    name:
+      name: Profile Name
+      description: Friendly name for the profile.
+      required: true
+      selector:
+        text:
+    temperature:
+      name: Temperature (°C)
+      default: 94
+      selector:
+        number:
+          min: 65
+          max: 100
+          step: 1
+          unit_of_measurement: "°C"
+    mass_output:
+      name: Coffee Output (g)
+      default: 40
+      selector:
+        number:
+          min: 10
+          max: 250
+          step: 1
+          unit_of_measurement: g
+
+toggle_favorite:
+  name: Toggle Favorite
+  description: Toggles favorite bookmark status for a recipe.
+  fields:
+    profile_id:
+      name: Profile ID
+      description: ID of the profile to bookmark or unbookmark.
+      required: true
+      selector:
+        text:

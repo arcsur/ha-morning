@@ -157,6 +157,9 @@ class MorningStatusSensor(MorningEntity, SensorEntity):
             "fault_information": self.machine.fault_information,
             "pump_flow_rate_k1": self.machine.pump_flow_rate_k1,
             "pump_flow_rate_p1": self.machine.pump_flow_rate_p1,
+            "recipe_catalog": self.coordinator.get_recipe_catalog(self._machine_id)
+            if hasattr(self.coordinator, "get_recipe_catalog")
+            else {},
         }
 
 

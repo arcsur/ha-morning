@@ -5,7 +5,21 @@ export const idleStates = {
     "state": "ready",
     "attributes": {
       "friendly_name": "DagusMorning Status",
-      "icon": "mdi:coffee-maker"
+      "icon": "mdi:coffee-maker",
+      "recipe_catalog": {
+        "quick": [
+          { "id": "1", "name": "Morning Glory", "temperature": 94, "mass_output": 38, "bloom_enabled": true, "bloom_duration": 12, "stages": [{ "id": 0, "output": 0, "pressure": 3 }, { "id": 1, "output": 6, "pressure": 7 }, { "id": 2, "output": 30, "pressure": 5 }] },
+          { "id": "2", "name": "Daily Driver", "temperature": 92, "mass_output": 45, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 10, "pressure": 6 }, { "id": 2, "output": 38, "pressure": 6 }] }
+        ],
+        "favorites": [
+          { "id": "fav-1", "name": "Ethiopia Yirgacheffe", "roaster_name": "April Coffee", "temperature": 93, "mass_output": 40, "bloom_enabled": true, "bloom_duration": 15, "is_favorite": true, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 8, "pressure": 6 }, { "id": 2, "output": 32, "pressure": 5 }] }
+        ],
+        "recents": [
+          { "id": "rec-1", "name": "Colombia Geisha", "roaster_name": "Tim Wendelboe", "temperature": 95, "mass_output": 35, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 4 }, { "id": 1, "output": 5, "pressure": 7 }, { "id": 2, "output": 28, "pressure": 5 }] }
+        ],
+        "custom": [],
+        "machine": []
+      }
     }
   },
   "sensor.kitchen_dagusmorning_brew_stage": {
@@ -101,7 +115,21 @@ export const heatingStates = {
     "state": "heating",
     "attributes": {
       "friendly_name": "DagusMorning Status",
-      "icon": "mdi:coffee-maker"
+      "icon": "mdi:coffee-maker",
+      "recipe_catalog": {
+        "quick": [
+          { "id": "1", "name": "Morning Glory", "temperature": 94, "mass_output": 38, "bloom_enabled": true, "bloom_duration": 12, "stages": [{ "id": 0, "output": 0, "pressure": 3 }, { "id": 1, "output": 6, "pressure": 7 }, { "id": 2, "output": 30, "pressure": 5 }] },
+          { "id": "2", "name": "Daily Driver", "temperature": 92, "mass_output": 45, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 10, "pressure": 6 }, { "id": 2, "output": 38, "pressure": 6 }] }
+        ],
+        "favorites": [
+          { "id": "fav-1", "name": "Ethiopia Yirgacheffe", "roaster_name": "April Coffee", "temperature": 93, "mass_output": 40, "bloom_enabled": true, "bloom_duration": 15, "is_favorite": true, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 8, "pressure": 6 }, { "id": 2, "output": 32, "pressure": 5 }] }
+        ],
+        "recents": [
+          { "id": "rec-1", "name": "Colombia Geisha", "roaster_name": "Tim Wendelboe", "temperature": 95, "mass_output": 35, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 4 }, { "id": 1, "output": 5, "pressure": 7 }, { "id": 2, "output": 28, "pressure": 5 }] }
+        ],
+        "custom": [],
+        "machine": []
+      }
     }
   },
   "sensor.kitchen_dagusmorning_brew_stage": {
@@ -197,7 +225,21 @@ export const brewingStates = {
     "state": "brewing",
     "attributes": {
       "friendly_name": "DagusMorning Status",
-      "icon": "mdi:coffee-maker"
+      "icon": "mdi:coffee-maker",
+      "recipe_catalog": {
+        "quick": [
+          { "id": "1", "name": "Morning Glory", "temperature": 94, "mass_output": 38, "bloom_enabled": true, "bloom_duration": 12, "stages": [{ "id": 0, "output": 0, "pressure": 3 }, { "id": 1, "output": 6, "pressure": 7 }, { "id": 2, "output": 30, "pressure": 5 }] },
+          { "id": "2", "name": "Daily Driver", "temperature": 92, "mass_output": 45, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 10, "pressure": 6 }, { "id": 2, "output": 38, "pressure": 6 }] }
+        ],
+        "favorites": [
+          { "id": "fav-1", "name": "Ethiopia Yirgacheffe", "roaster_name": "April Coffee", "temperature": 93, "mass_output": 40, "bloom_enabled": true, "bloom_duration": 15, "is_favorite": true, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 8, "pressure": 6 }, { "id": 2, "output": 32, "pressure": 5 }] }
+        ],
+        "recents": [
+          { "id": "rec-1", "name": "Colombia Geisha", "roaster_name": "Tim Wendelboe", "temperature": 95, "mass_output": 35, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 4 }, { "id": 1, "output": 5, "pressure": 7 }, { "id": 2, "output": 28, "pressure": 5 }] }
+        ],
+        "custom": [],
+        "machine": []
+      }
     }
   },
   "sensor.kitchen_dagusmorning_brew_stage": {
@@ -329,7 +371,21 @@ export const doneStates = {
     "state": "ready",
     "attributes": {
       "friendly_name": "DagusMorning Status",
-      "icon": "mdi:coffee-maker"
+      "icon": "mdi:coffee-maker",
+      "recipe_catalog": {
+        "quick": [
+          { "id": "1", "name": "Morning Glory", "temperature": 94, "mass_output": 38, "bloom_enabled": true, "bloom_duration": 12, "stages": [{ "id": 0, "output": 0, "pressure": 3 }, { "id": 1, "output": 6, "pressure": 7 }, { "id": 2, "output": 30, "pressure": 5 }] },
+          { "id": "2", "name": "Daily Driver", "temperature": 92, "mass_output": 45, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 10, "pressure": 6 }, { "id": 2, "output": 38, "pressure": 6 }] }
+        ],
+        "favorites": [
+          { "id": "fav-1", "name": "Ethiopia Yirgacheffe", "roaster_name": "April Coffee", "temperature": 93, "mass_output": 40, "bloom_enabled": true, "bloom_duration": 15, "is_favorite": true, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 8, "pressure": 6 }, { "id": 2, "output": 32, "pressure": 5 }] }
+        ],
+        "recents": [
+          { "id": "rec-1", "name": "Colombia Geisha", "roaster_name": "Tim Wendelboe", "temperature": 95, "mass_output": 35, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 4 }, { "id": 1, "output": 5, "pressure": 7 }, { "id": 2, "output": 28, "pressure": 5 }] }
+        ],
+        "custom": [],
+        "machine": []
+      }
     }
   },
   "sensor.kitchen_dagusmorning_brew_stage": {
@@ -468,7 +524,21 @@ export const cancelStates = {
     "state": "ready",
     "attributes": {
       "friendly_name": "DagusMorning Status",
-      "icon": "mdi:coffee-maker"
+      "icon": "mdi:coffee-maker",
+      "recipe_catalog": {
+        "quick": [
+          { "id": "1", "name": "Morning Glory", "temperature": 94, "mass_output": 38, "bloom_enabled": true, "bloom_duration": 12, "stages": [{ "id": 0, "output": 0, "pressure": 3 }, { "id": 1, "output": 6, "pressure": 7 }, { "id": 2, "output": 30, "pressure": 5 }] },
+          { "id": "2", "name": "Daily Driver", "temperature": 92, "mass_output": 45, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 10, "pressure": 6 }, { "id": 2, "output": 38, "pressure": 6 }] }
+        ],
+        "favorites": [
+          { "id": "fav-1", "name": "Ethiopia Yirgacheffe", "roaster_name": "April Coffee", "temperature": 93, "mass_output": 40, "bloom_enabled": true, "bloom_duration": 15, "is_favorite": true, "stages": [{ "id": 0, "output": 0, "pressure": 2 }, { "id": 1, "output": 8, "pressure": 6 }, { "id": 2, "output": 32, "pressure": 5 }] }
+        ],
+        "recents": [
+          { "id": "rec-1", "name": "Colombia Geisha", "roaster_name": "Tim Wendelboe", "temperature": 95, "mass_output": 35, "bloom_enabled": false, "bloom_duration": 0, "stages": [{ "id": 0, "output": 0, "pressure": 4 }, { "id": 1, "output": 5, "pressure": 7 }, { "id": 2, "output": 28, "pressure": 5 }] }
+        ],
+        "custom": [],
+        "machine": []
+      }
     }
   },
   "sensor.kitchen_dagusmorning_brew_stage": {

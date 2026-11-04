@@ -63,6 +63,11 @@ SERVICE_RESET_MACHINE: Final = "reset_machine"
 SERVICE_CHECK_UPDATES: Final = "check_updates"
 SERVICE_REFILL_WATER: Final = "refill_water"
 SERVICE_RECORD_PURGE: Final = "record_purge"
+SERVICE_BREW_RECIPE: Final = "brew_recipe"
+SERVICE_CANCEL_BREW: Final = "cancel_brew"
+SERVICE_SEARCH_RECIPES: Final = "search_recipes"
+SERVICE_SAVE_PROFILE: Final = "save_profile"
+SERVICE_TOGGLE_FAVORITE: Final = "toggle_favorite"
 ATTR_AMOUNT_ML: Final = "amount_ml"
 
 # Machine Statuses

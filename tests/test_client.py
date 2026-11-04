@@ -303,6 +303,60 @@ class TestMorningClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_args[0], "PUT")
         self.assertIn("machine/reset", call_args[1])
 
+    async def test_get_and_search_recipes(self):
+        """Test fetching and searching recipes via REST API."""
+        self.client._auth_session = MorningAuthSession(
+            access_token="acc",
+            id_token="id",
+            refresh_token="ref",
+            expires_at=9999999999.0,
+            email=self.email,
+        )
+
+        mock_recipes_payload = [
+            {
+                "id": 10,
+                "name": "Classic Bloom",
+                "temperature": 93,
+                "massOutput": 42,
+                "waterOutput": 0,
+                "bloomDuration": 8,
+                "roaster": {"name": "April Coffee"},
+                "pressureProfile": {
+                    "stageDtos": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 10, "pressure": 7},
+                        {"id": 2, "output": 35, "pressure": 4},
+                    ]
+                },
+            }
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=mock_recipes_payload)
+        self.session.request.return_value.__aenter__.return_value = mock_resp
+
+        # 1. Machine recipes
+        recs = await self.client.get_machine_recipes()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0].name, "Classic Bloom")
+        self.assertEqual(recs[0].roaster_name, "April Coffee")
+        self.assertEqual(recs[0].temperature, 93)
+        self.assertEqual(recs[0].mass_output, 42)
+        self.assertEqual(recs[0].bloom_duration, 8)
+        self.assertEqual(len(recs[0].stages), 3)
+
+        # 2. Favorites
+        favs = await self.client.get_favorite_recipes()
+        self.assertEqual(len(favs), 1)
+        self.assertTrue(favs[0].is_favorite)
+
+        # 3. Search recipes
+        search_res = await self.client.search_recipes("April")
+        self.assertGreaterEqual(len(search_res), 1)
+        self.assertEqual(search_res[0].name, "Classic Bloom")
+
 
 if __name__ == "__main__":
     unittest.main()

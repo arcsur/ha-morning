@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.4.8";
+const CARD_VERSION = "1.5.0";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -41,6 +41,32 @@ class MorningCoffeeCard extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._resolvedEntities = {};
+    this._brewDrawerOpen = false;
+    this._activeBrewTab = "saved";
+    this._savedSubTab = "favorites";
+    this._activePresetKey = "custom";
+    this._draftCurve = {
+      id: 0,
+      name: "Custom Profile",
+      temperature: 94,
+      mass_output: 40,
+      water_output: 0,
+      bloom_enabled: false,
+      bloom_duration: 10,
+      bypass_enabled: false,
+      stages: [
+        { id: 0, output: 0, pressure: 3 },
+        { id: 1, output: 5, pressure: 7 },
+        { id: 2, output: 35, pressure: 5 },
+      ],
+      is_favorite: false,
+    };
+    this._isDraggingHandle = false;
+    this._activeHandleIndex = -1;
+    this._searchQuery = "";
+    this._searchResults = [];
+    this._isSearching = false;
+    this._confirmBrewProfile = null;
     this._setupClickListener();
   }
 
@@ -56,6 +82,7 @@ class MorningCoffeeCard extends HTMLElement {
       entity: statusEntity || "sensor.dagusmorning_status",
       show_header: true,
       show_brew_section: true,
+      show_brew_controls: true,
       show_extraction_curve: true,
       show_water_gauge: true,
       show_diagnostics: true,
@@ -75,6 +102,7 @@ class MorningCoffeeCard extends HTMLElement {
       name: null,
       show_header: true,
       show_brew_section: true,
+      show_brew_controls: true,
       show_extraction_curve: true,
       show_water_gauge: true,
       show_diagnostics: true,
@@ -83,6 +111,10 @@ class MorningCoffeeCard extends HTMLElement {
     };
     this._resolvedEntities = {};
     this._render();
+  }
+
+  get hass() {
+    return this._hass;
   }
 
   set hass(hass) {
@@ -125,6 +157,127 @@ class MorningCoffeeCard extends HTMLElement {
         if (el.id === "refill-action") {
           e.stopPropagation();
           this._handleRefill();
+          return;
+        }
+
+        if (el.id === "btn-cancel-brew") {
+          e.stopPropagation();
+          this._executeCancelBrew();
+          return;
+        }
+
+        if (el.id === "btn-toggle-drawer") {
+          e.stopPropagation();
+          this._brewDrawerOpen = !this._brewDrawerOpen;
+          this._updateContent();
+          return;
+        }
+
+        if (el.id === "btn-confirm-brew-now") {
+          e.stopPropagation();
+          if (this._confirmBrewProfile) {
+            this._executeBrew(this._confirmBrewProfile);
+            this._confirmBrewProfile = null;
+            this._updateContent();
+          }
+          return;
+        }
+
+        if (el.id === "btn-confirm-load-studio") {
+          e.stopPropagation();
+          if (this._confirmBrewProfile) {
+            this._loadProfileIntoStudio(this._confirmBrewProfile);
+          }
+          return;
+        }
+
+        if (el.id === "btn-confirm-dismiss") {
+          e.stopPropagation();
+          this._confirmBrewProfile = null;
+          this._updateContent();
+          return;
+        }
+
+        if (el.id === "btn-submit-search") {
+          e.stopPropagation();
+          this._performSearch(this._searchQuery);
+          return;
+        }
+
+        if (el.id === "btn-studio-save") {
+          e.stopPropagation();
+          this._saveCustomProfile(this._draftCurve);
+          return;
+        }
+
+        if (el.id === "btn-studio-brew") {
+          e.stopPropagation();
+          this._executeBrew(this._draftCurve);
+          return;
+        }
+
+        const tab = el.getAttribute("data-tab");
+        if (tab) {
+          e.stopPropagation();
+          this._activeBrewTab = tab;
+          this._updateContent();
+          return;
+        }
+
+        const subtab = el.getAttribute("data-subtab");
+        if (subtab) {
+          e.stopPropagation();
+          this._savedSubTab = subtab;
+          this._updateContent();
+          return;
+        }
+
+        const preset = el.getAttribute("data-preset");
+        if (preset) {
+          e.stopPropagation();
+          this._applyPreset(preset);
+          return;
+        }
+
+        const param = el.getAttribute("data-param");
+        const step = el.getAttribute("data-step");
+        if (param && step) {
+          e.stopPropagation();
+          this._handleParamStep(param, parseFloat(step));
+          return;
+        }
+
+        const toggle = el.getAttribute("data-toggle");
+        if (toggle) {
+          e.stopPropagation();
+          this._handleToggle(toggle);
+          return;
+        }
+
+        const chipIndex = el.getAttribute("data-quick-chip-index");
+        if (chipIndex !== null) {
+          e.stopPropagation();
+          this._handleQuickChipClick(parseInt(chipIndex, 10));
+          return;
+        }
+
+        const action = el.getAttribute("data-action");
+        if (action) {
+          e.stopPropagation();
+          const profileJson = el.getAttribute("data-profile");
+          let profile = null;
+          if (profileJson) {
+            try {
+              profile = JSON.parse(decodeURIComponent(profileJson));
+            } catch (_) {}
+          }
+          if (action === "brew-profile" && profile) {
+            this._executeBrew(profile);
+          } else if (action === "load-studio" && profile) {
+            this._loadProfileIntoStudio(profile);
+          } else if (action === "toggle-fav" && profile) {
+            this._toggleFavoriteProfile(profile);
+          }
           return;
         }
 
@@ -710,6 +863,656 @@ class MorningCoffeeCard extends HTMLElement {
           opacity: 0.85;
           filter: brightness(1.15);
         }
+
+        /* Brew Controls & Quick Bar */
+        .brew-controls-section {
+          margin-bottom: 14px;
+        }
+        .cancel-banner {
+          background: linear-gradient(135deg, rgba(231, 76, 60, 0.2), rgba(192, 57, 43, 0.3));
+          border: 1px solid rgba(231, 76, 60, 0.5);
+          border-radius: 10px;
+          padding: 10px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          animation: pulse-border 1.5s infinite ease-in-out;
+        }
+        @keyframes pulse-border {
+          0% { box-shadow: 0 0 5px rgba(231, 76, 60, 0.2); }
+          50% { box-shadow: 0 0 15px rgba(231, 76, 60, 0.4); }
+          100% { box-shadow: 0 0 5px rgba(231, 76, 60, 0.2); }
+        }
+        .cancel-banner-info {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 600;
+          font-size: 0.88rem;
+          color: #ff7675;
+        }
+        .cancel-banner-btn {
+          background: #e74c3c;
+          color: #fff;
+          border: none;
+          border-radius: 6px;
+          padding: 6px 14px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          cursor: pointer !important;
+          transition: background 0.2s;
+        }
+        .cancel-banner-btn * {
+          cursor: pointer !important;
+        }
+        .cancel-banner-btn:hover {
+          background: #c0392b;
+        }
+        .quick-brew-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+        }
+        .quick-chips-scroll {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          overflow-x: auto;
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+          flex: 1;
+          padding: 2px 0;
+        }
+        .quick-chips-scroll::-webkit-scrollbar {
+          display: none;
+        }
+        .quick-chip {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 20px;
+          padding: 5px 12px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          color: var(--primary-text-color, #eee);
+          cursor: pointer !important;
+          transition: all 0.2s;
+        }
+        .quick-chip * {
+          cursor: pointer !important;
+        }
+        .quick-chip:hover {
+          background: rgba(230, 126, 34, 0.15);
+          border-color: rgba(230, 126, 34, 0.4);
+          color: #fff;
+          transform: translateY(-1px);
+        }
+        .quick-chip.active {
+          background: rgba(230, 126, 34, 0.25);
+          border-color: var(--primary-color, #e67e22);
+          color: #fff;
+        }
+        .quick-chip ha-icon {
+          --mdc-icon-size: 13px;
+          color: var(--primary-color, #e67e22);
+        }
+        .studio-toggle-btn {
+          background: rgba(230, 126, 34, 0.15);
+          border: 1px solid rgba(230, 126, 34, 0.35);
+          border-radius: 8px;
+          padding: 6px 12px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: var(--primary-color, #e67e22);
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          cursor: pointer !important;
+          white-space: nowrap;
+          transition: all 0.2s;
+        }
+        .studio-toggle-btn * {
+          cursor: pointer !important;
+        }
+        .studio-toggle-btn:hover {
+          background: rgba(230, 126, 34, 0.25);
+          border-color: var(--primary-color, #e67e22);
+        }
+        .studio-toggle-btn.active {
+          background: var(--primary-color, #e67e22);
+          color: #fff;
+        }
+        .studio-toggle-btn.active ha-icon {
+          color: #fff;
+        }
+
+        /* Quick Confirmation Bar */
+        .confirm-bar {
+          background: rgba(230, 126, 34, 0.12);
+          border: 1px solid rgba(230, 126, 34, 0.3);
+          border-radius: 8px;
+          padding: 8px 12px;
+          margin-top: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.8rem;
+          animation: fade-in 0.2s ease-out;
+        }
+        .confirm-info {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #fff;
+        }
+        .confirm-info strong {
+          color: var(--primary-color, #e67e22);
+        }
+        .confirm-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .btn-confirm-brew {
+          background: var(--primary-color, #e67e22);
+          color: #fff;
+          border: none;
+          border-radius: 6px;
+          padding: 5px 12px;
+          font-size: 0.75rem;
+          font-weight: 700;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .btn-confirm-brew * {
+          cursor: pointer !important;
+        }
+        .btn-confirm-brew:hover {
+          filter: brightness(1.15);
+        }
+        .btn-confirm-edit {
+          background: rgba(255, 255, 255, 0.08);
+          color: #eee;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 6px;
+          padding: 5px 10px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          cursor: pointer !important;
+        }
+        .btn-confirm-edit * {
+          cursor: pointer !important;
+        }
+        .btn-confirm-dismiss {
+          background: transparent;
+          color: #888;
+          border: none;
+          padding: 4px 6px;
+          font-size: 0.9rem;
+          cursor: pointer !important;
+        }
+        .btn-confirm-dismiss * {
+          cursor: pointer !important;
+        }
+
+        /* Expandable Brew Drawer */
+        .brew-drawer {
+          background: rgba(0, 0, 0, 0.35);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          margin-top: 8px;
+          padding: 12px;
+          animation: slide-down 0.25s ease-out;
+        }
+        @keyframes slide-down {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        /* Drawer Main Tabs */
+        .drawer-tabs {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          padding-bottom: 8px;
+          margin-bottom: 12px;
+        }
+        .tab-btn {
+          background: transparent;
+          border: none;
+          border-bottom: 2px solid transparent;
+          color: var(--secondary-text-color, #888);
+          padding: 4px 10px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          transition: all 0.2s;
+        }
+        .tab-btn * {
+          cursor: pointer !important;
+        }
+        .tab-btn:hover {
+          color: #eee;
+        }
+        .tab-btn.active {
+          color: var(--primary-color, #e67e22);
+          border-bottom-color: var(--primary-color, #e67e22);
+        }
+
+        /* Saved Subtabs */
+        .saved-subtabs {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 10px;
+        }
+        .subtab-btn {
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 14px;
+          padding: 3px 10px;
+          font-size: 0.72rem;
+          color: var(--secondary-text-color, #999);
+          cursor: pointer !important;
+          transition: all 0.2s;
+        }
+        .subtab-btn * {
+          cursor: pointer !important;
+        }
+        .subtab-btn:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.08);
+        }
+        .subtab-btn.active {
+          background: rgba(230, 126, 34, 0.2);
+          border-color: rgba(230, 126, 34, 0.4);
+          color: #e67e22;
+          font-weight: 600;
+        }
+
+        /* Profile Cards List */
+        .profile-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          max-height: 280px;
+          overflow-y: auto;
+          scrollbar-width: thin;
+        }
+        .profile-card {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 8px;
+          padding: 8px 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          transition: all 0.2s;
+        }
+        .profile-card:hover {
+          background: rgba(255, 255, 255, 0.06);
+          border-color: rgba(255, 255, 255, 0.12);
+        }
+        .profile-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+          min-width: 0;
+        }
+        .profile-header-line {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .profile-name {
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: #fff;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .profile-roaster-badge {
+          font-size: 0.65rem;
+          padding: 1px 5px;
+          border-radius: 4px;
+          background: rgba(52, 152, 219, 0.15);
+          color: #3498db;
+          border: 1px solid rgba(52, 152, 219, 0.3);
+          font-weight: 600;
+        }
+        .profile-specs {
+          font-size: 0.72rem;
+          color: var(--secondary-text-color, #888);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-variant-numeric: tabular-nums;
+        }
+        .profile-specs .highlight {
+          color: var(--primary-color, #e67e22);
+          font-weight: 600;
+        }
+        .profile-sparkline {
+          width: 58px;
+          height: 24px;
+          flex-shrink: 0;
+        }
+        .profile-actions {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          flex-shrink: 0;
+        }
+        .icon-action-btn {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+          padding: 5px;
+          color: #aaa;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+        }
+        .icon-action-btn * {
+          cursor: pointer !important;
+        }
+        .icon-action-btn:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.12);
+        }
+        .icon-action-btn.fav.active {
+          color: #f1c40f;
+          border-color: rgba(241, 196, 15, 0.3);
+        }
+        .brew-pill-btn {
+          background: var(--primary-color, #e67e22);
+          color: #fff;
+          border: none;
+          border-radius: 6px;
+          padding: 5px 10px;
+          font-size: 0.74rem;
+          font-weight: 700;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.2s;
+        }
+        .brew-pill-btn * {
+          cursor: pointer !important;
+        }
+        .brew-pill-btn:hover {
+          filter: brightness(1.15);
+        }
+
+        /* Search Section */
+        .search-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 10px;
+        }
+        .search-input {
+          flex: 1;
+          background: rgba(0, 0, 0, 0.3);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 6px;
+          padding: 8px 12px;
+          color: #fff;
+          font-size: 0.82rem;
+          outline: none;
+        }
+        .search-input:focus {
+          border-color: var(--primary-color, #e67e22);
+        }
+        .search-submit-btn {
+          background: rgba(230, 126, 34, 0.2);
+          border: 1px solid rgba(230, 126, 34, 0.4);
+          color: var(--primary-color, #e67e22);
+          border-radius: 6px;
+          padding: 8px 12px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .search-submit-btn * {
+          cursor: pointer !important;
+        }
+        .search-submit-btn:hover {
+          background: var(--primary-color, #e67e22);
+          color: #fff;
+        }
+
+        /* Interactive Curve Studio */
+        .studio-container {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .presets-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .preset-btn {
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 6px;
+          padding: 4px 10px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          color: #aaa;
+          cursor: pointer !important;
+          transition: all 0.2s;
+        }
+        .preset-btn * {
+          cursor: pointer !important;
+        }
+        .preset-btn:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.08);
+        }
+        .preset-btn.active {
+          background: rgba(230, 126, 34, 0.25);
+          border-color: var(--primary-color, #e67e22);
+          color: #fff;
+        }
+        .studio-svg-box {
+          position: relative;
+          background: rgba(0, 0, 0, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          padding: 8px 6px;
+        }
+        .studio-svg {
+          width: 100%;
+          height: auto;
+          display: block;
+          touch-action: none;
+          user-select: none;
+        }
+        .studio-handle {
+          cursor: pointer !important;
+          transition: r 0.15s ease;
+        }
+        .studio-handle:hover, .studio-handle.active {
+          r: 9;
+          filter: drop-shadow(0 0 6px var(--primary-color, #e67e22));
+        }
+        .studio-floating-tooltip {
+          position: absolute;
+          top: 10px;
+          right: 12px;
+          background: rgba(18, 18, 18, 0.95);
+          border: 1px solid var(--primary-color, #e67e22);
+          border-radius: 6px;
+          padding: 3px 8px;
+          font-size: 0.72rem;
+          color: #fff;
+          font-weight: 600;
+          pointer-events: none;
+          display: none;
+        }
+        .studio-params-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .stepper-box {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 8px;
+          padding: 6px 10px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .stepper-label {
+          display: flex;
+          flex-direction: column;
+        }
+        .stepper-label-title {
+          font-size: 0.68rem;
+          color: var(--secondary-text-color, #888);
+          text-transform: uppercase;
+        }
+        .stepper-label-val {
+          font-size: 1.05rem;
+          font-weight: 700;
+          color: #fff;
+        }
+        .stepper-controls {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .step-ctrl-btn {
+          width: 26px;
+          height: 26px;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          color: #fff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.9rem;
+          font-weight: 700;
+          cursor: pointer !important;
+        }
+        .step-ctrl-btn * {
+          cursor: pointer !important;
+        }
+        .step-ctrl-btn:hover {
+          background: rgba(230, 126, 34, 0.3);
+          border-color: var(--primary-color, #e67e22);
+        }
+        .advanced-pills-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .adv-pill {
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          padding: 4px 10px;
+          font-size: 0.72rem;
+          color: #aaa;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.2s;
+        }
+        .adv-pill * {
+          cursor: pointer !important;
+        }
+        .adv-pill:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.08);
+        }
+        .adv-pill.active {
+          background: rgba(52, 152, 219, 0.2);
+          border-color: rgba(52, 152, 219, 0.4);
+          color: #3498db;
+          font-weight: 600;
+        }
+        .studio-actions-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-top: 6px;
+        }
+        .btn-save-curve {
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 8px;
+          color: #eee;
+          padding: 8px 14px;
+          font-size: 0.8rem;
+          font-weight: 600;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          transition: all 0.2s;
+        }
+        .btn-save-curve * {
+          cursor: pointer !important;
+        }
+        .btn-save-curve:hover {
+          background: rgba(255, 255, 255, 0.12);
+          color: #fff;
+        }
+        .btn-brew-primary {
+          background: linear-gradient(135deg, #e67e22, #d35400);
+          border: none;
+          border-radius: 8px;
+          color: #fff;
+          padding: 8px 18px;
+          font-size: 0.85rem;
+          font-weight: 700;
+          cursor: pointer !important;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          box-shadow: 0 2px 10px rgba(230, 126, 34, 0.35);
+          transition: all 0.2s;
+        }
+        .btn-brew-primary * {
+          cursor: pointer !important;
+        }
+        .btn-brew-primary:hover {
+          filter: brightness(1.12);
+          box-shadow: 0 4px 15px rgba(230, 126, 34, 0.5);
+          transform: translateY(-1px);
+        }
       </style>
       <ha-card id="card-root">
       </ha-card>
@@ -731,6 +1534,821 @@ class MorningCoffeeCard extends HTMLElement {
   _handlePurge() {
     if (!this._hass) return;
     this._hass.callService("morning", "record_purge", {});
+  }
+
+  _escapeHtml(str) {
+    if (typeof str !== "string") return "";
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  _executeBrew(recipe) {
+    if (!this._hass) return;
+    const entityId = this._config.entity;
+    const data = {
+      entity_id: entityId,
+      name: recipe.name || "Custom Profile",
+      temperature: Number(recipe.temperature) || 94,
+      mass_output: Number(recipe.mass_output) || 40,
+      water_output: Number(recipe.water_output) || 0,
+      bloom_duration: recipe.bloom_enabled ? Number(recipe.bloom_duration) || 10 : 0,
+    };
+    if (recipe.id !== undefined && recipe.id !== null) {
+      data.profile_id = String(recipe.id);
+    }
+    if (Array.isArray(recipe.stages) && recipe.stages.length >= 3) {
+      data.stage1_pressure = Number(recipe.stages[0].pressure) || 3;
+      data.stage2_pressure = Number(recipe.stages[1].pressure) || 7;
+      data.stage3_pressure = Number(recipe.stages[2].pressure) || 5;
+      data.stage2_weight = Number(recipe.stages[1].output) || 5;
+      data.stage3_weight = Number(recipe.stages[2].output) || 30;
+    }
+    this._hass.callService("morning", "brew_recipe", data);
+  }
+
+  _executeCancelBrew() {
+    if (!this._hass) return;
+    const entityId = this._config.entity;
+    this._hass.callService("morning", "cancel_brew", { entity_id: entityId });
+  }
+
+  _toggleFavoriteProfile(recipe) {
+    if (!this._hass || !recipe) return;
+    const entityId = this._config.entity;
+    const profileId = recipe.id !== undefined && recipe.id !== null ? String(recipe.id) : recipe.name;
+    this._hass.callService("morning", "toggle_favorite", {
+      entity_id: entityId,
+      profile_id: profileId,
+      recipe: recipe,
+    });
+  }
+
+  _saveCustomProfile(recipe) {
+    if (!this._hass || !recipe) return;
+    const entityId = this._config.entity;
+    const promptName = window.prompt("Enter name for this custom brew curve:", recipe.name || "Custom Profile");
+    if (!promptName || !promptName.trim()) return;
+    const updatedRecipe = {
+      ...recipe,
+      name: promptName.trim(),
+      id: Date.now(),
+    };
+    this._draftCurve.name = promptName.trim();
+    this._hass.callService("morning", "save_profile", {
+      entity_id: entityId,
+      ...updatedRecipe,
+    });
+  }
+
+  async _performSearch(query) {
+    if (!query || !query.trim()) {
+      this._searchResults = [];
+      this._isSearching = false;
+      this._updateContent();
+      return;
+    }
+    this._searchQuery = query.trim();
+    this._isSearching = true;
+    this._updateContent();
+
+    try {
+      if (this._hass && typeof this._hass.callWS === "function") {
+        const resp = await this._hass.callWS({
+          type: "call_service",
+          domain: "morning",
+          service: "search_recipes",
+          service_data: { query: this._searchQuery },
+          return_response: true,
+        });
+        const results = resp?.response?.recipes || [];
+        this._searchResults = results;
+      } else {
+        const statusState = this._getState("status");
+        const catalog = statusState?.attributes?.recipe_catalog || {};
+        const all = [
+          ...(catalog.favorites || []),
+          ...(catalog.recents || []),
+          ...(catalog.custom || []),
+          ...(catalog.machine || []),
+        ];
+        const q = this._searchQuery.toLowerCase();
+        this._searchResults = all.filter((r) =>
+          (r.name && r.name.toLowerCase().includes(q)) ||
+          (r.roaster_name && r.roaster_name.toLowerCase().includes(q))
+        );
+      }
+    } catch (err) {
+      const statusState = this._getState("status");
+      const catalog = statusState?.attributes?.recipe_catalog || {};
+      const all = [
+        ...(catalog.favorites || []),
+        ...(catalog.recents || []),
+        ...(catalog.custom || []),
+        ...(catalog.machine || []),
+      ];
+      const q = this._searchQuery.toLowerCase();
+      this._searchResults = all.filter((r) =>
+        (r.name && r.name.toLowerCase().includes(q)) ||
+        (r.roaster_name && r.roaster_name.toLowerCase().includes(q))
+      );
+    } finally {
+      this._isSearching = false;
+      this._updateContent();
+    }
+  }
+
+  _loadProfileIntoStudio(profile) {
+    const mass = Number(profile.mass_output) || 40;
+    this._draftCurve = {
+      id: profile.id || Date.now(),
+      name: profile.name || "Custom Profile",
+      temperature: Number(profile.temperature) || 94,
+      mass_output: mass,
+      water_output: Number(profile.water_output) || 0,
+      bloom_enabled: !!profile.bloom_enabled || (Number(profile.bloom_duration) || 0) > 0,
+      bloom_duration: Number(profile.bloom_duration) || 10,
+      bypass_enabled: !!profile.bypass_enabled || (Number(profile.water_output) || 0) > 0,
+      stages: Array.isArray(profile.stages) && profile.stages.length >= 3
+        ? profile.stages.map((s, idx) => ({
+            id: s.id !== undefined ? s.id : idx,
+            output: Number(s.output) || 0,
+            pressure: Math.min(7, Math.max(1, Number(s.pressure) || 4)),
+          }))
+        : [
+            { id: 0, output: 0, pressure: 3 },
+            { id: 1, output: Math.round(mass * 0.2), pressure: 7 },
+            { id: 2, output: Math.round(mass * 0.8), pressure: 5 },
+          ],
+      is_favorite: !!profile.is_favorite,
+    };
+    this._activePresetKey = "custom";
+    this._activeBrewTab = "studio";
+    this._brewDrawerOpen = true;
+    this._confirmBrewProfile = null;
+    this._updateContent();
+  }
+
+  _applyPreset(key) {
+    this._activePresetKey = key;
+    if (key === "short") {
+      this._draftCurve.name = "Short (Ristretto)";
+      this._draftCurve.temperature = 93;
+      this._draftCurve.mass_output = 25;
+      this._draftCurve.bloom_enabled = false;
+      this._draftCurve.stages = [
+        { id: 0, output: 0, pressure: 3 },
+        { id: 1, output: 4, pressure: 7 },
+        { id: 2, output: 20, pressure: 5 },
+      ];
+    } else if (key === "slow") {
+      this._draftCurve.name = "Slow & Steady";
+      this._draftCurve.temperature = 94;
+      this._draftCurve.mass_output = 40;
+      this._draftCurve.bloom_enabled = true;
+      this._draftCurve.bloom_duration = 10;
+      this._draftCurve.stages = [
+        { id: 0, output: 0, pressure: 2 },
+        { id: 1, output: 10, pressure: 5 },
+        { id: 2, output: 32, pressure: 6 },
+      ];
+    } else if (key === "fast") {
+      this._draftCurve.name = "Fast Shot";
+      this._draftCurve.temperature = 95;
+      this._draftCurve.mass_output = 35;
+      this._draftCurve.bloom_enabled = false;
+      this._draftCurve.stages = [
+        { id: 0, output: 0, pressure: 7 },
+        { id: 1, output: 15, pressure: 7 },
+        { id: 2, output: 28, pressure: 4 },
+      ];
+    }
+    this._updateContent();
+  }
+
+  _handleParamStep(param, delta) {
+    if (param === "mass") {
+      const cur = this._draftCurve.mass_output || 40;
+      const next = Math.max(10, Math.min(250, cur + delta));
+      this._draftCurve.mass_output = next;
+      if (this._draftCurve.stages && this._draftCurve.stages.length >= 3) {
+        if (this._draftCurve.stages[2].output >= next) {
+          this._draftCurve.stages[2].output = Math.max(4, next - 4);
+        }
+        if (this._draftCurve.stages[1].output >= this._draftCurve.stages[2].output) {
+          this._draftCurve.stages[1].output = Math.max(2, this._draftCurve.stages[2].output - 2);
+        }
+      }
+    } else if (param === "temp") {
+      const cur = this._draftCurve.temperature || 94;
+      this._draftCurve.temperature = Math.max(65, Math.min(99, cur + delta));
+    } else if (param === "bloom_sec") {
+      const cur = this._draftCurve.bloom_duration || 10;
+      this._draftCurve.bloom_duration = Math.max(1, Math.min(60, cur + delta));
+    }
+    this._activePresetKey = "custom";
+    this._updateContent();
+  }
+
+  _handleToggle(toggle) {
+    if (toggle === "bloom") {
+      this._draftCurve.bloom_enabled = !this._draftCurve.bloom_enabled;
+      if (this._draftCurve.bloom_enabled && !this._draftCurve.bloom_duration) {
+        this._draftCurve.bloom_duration = 10;
+      }
+    } else if (toggle === "bypass") {
+      this._draftCurve.bypass_enabled = !this._draftCurve.bypass_enabled;
+    }
+    this._activePresetKey = "custom";
+    this._updateContent();
+  }
+
+  _handleQuickChipClick(index) {
+    const catalog = this._getState("status")?.attributes?.recipe_catalog || {};
+    const quickList = this._getQuickProfiles(catalog);
+    const profile = quickList[index];
+    if (!profile) return;
+    this._confirmBrewProfile = profile;
+    this._updateContent();
+  }
+
+  _getQuickProfiles(catalog) {
+    if (catalog?.quick && Array.isArray(catalog.quick) && catalog.quick.length > 0) {
+      return catalog.quick;
+    }
+    const combined = [
+      ...(catalog?.favorites || []),
+      ...(catalog?.recents || []),
+      ...(catalog?.custom || []),
+      ...(catalog?.machine || []),
+    ];
+    if (combined.length > 0) {
+      return combined.slice(0, 6);
+    }
+    return [
+      {
+        id: "default-espresso",
+        name: "Classic Espresso",
+        temperature: 94,
+        mass_output: 36,
+        bloom_enabled: false,
+        bloom_duration: 0,
+        stages: [
+          { id: 0, output: 0, pressure: 3 },
+          { id: 1, output: 5, pressure: 7 },
+          { id: 2, output: 30, pressure: 5 },
+        ],
+      },
+      {
+        id: "default-bloom",
+        name: "Bloom & Extract",
+        temperature: 93,
+        mass_output: 40,
+        bloom_enabled: true,
+        bloom_duration: 10,
+        stages: [
+          { id: 0, output: 0, pressure: 2 },
+          { id: 1, output: 8, pressure: 6 },
+          { id: 2, output: 32, pressure: 6 },
+        ],
+      },
+      {
+        id: "default-lungo",
+        name: "Long Shot",
+        temperature: 95,
+        mass_output: 60,
+        bloom_enabled: false,
+        bloom_duration: 0,
+        stages: [
+          { id: 0, output: 0, pressure: 6 },
+          { id: 1, output: 20, pressure: 7 },
+          { id: 2, output: 50, pressure: 4 },
+        ],
+      },
+    ];
+  }
+
+  _renderBrewSection(recipeCatalog, isBrewing, machineId) {
+    if (isBrewing) {
+      return `
+        <div class="brew-controls-section">
+          <div class="cancel-banner">
+            <div class="cancel-banner-info">
+              <ha-icon icon="mdi:coffee-maker-check"></ha-icon>
+              <span>Brewing in progress...</span>
+            </div>
+            <button class="cancel-banner-btn" id="btn-cancel-brew">
+              <ha-icon icon="mdi:stop-circle-outline"></ha-icon>
+              <span>Cancel Brew</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    const quickList = this._getQuickProfiles(recipeCatalog);
+    const quickChipsHtml = quickList.map((p, idx) => {
+      const isSelected = this._confirmBrewProfile && this._confirmBrewProfile.name === p.name;
+      return `
+        <button class="quick-chip${isSelected ? " active" : ""}" data-quick-chip-index="${idx}">
+          <ha-icon icon="mdi:coffee-outline"></ha-icon>
+          <span>${this._escapeHtml(p.name)}</span>
+          <span style="opacity: 0.6; font-size: 0.68rem;">${p.temperature}°/${p.mass_output}g</span>
+        </button>
+      `;
+    }).join("");
+
+    return `
+      <div class="brew-controls-section">
+        <div class="quick-brew-row">
+          <div class="quick-chips-scroll">
+            ${quickChipsHtml}
+          </div>
+          <button class="studio-toggle-btn${this._brewDrawerOpen ? " active" : ""}" id="btn-toggle-drawer">
+            <ha-icon icon="${this._brewDrawerOpen ? "mdi:chevron-up" : "mdi:tune-vertical"}"></ha-icon>
+            <span>${this._brewDrawerOpen ? "Close" : "Brew Controls"}</span>
+          </button>
+        </div>
+        ${this._confirmBrewProfile ? this._renderConfirmBar() : ""}
+        ${this._brewDrawerOpen ? this._renderDrawer(recipeCatalog) : ""}
+      </div>
+    `;
+  }
+
+  _renderConfirmBar() {
+    if (!this._confirmBrewProfile) return "";
+    return `
+      <div class="confirm-bar">
+        <div class="confirm-info">
+          <ha-icon icon="mdi:coffee-outline" style="color: var(--primary-color, #e67e22);"></ha-icon>
+          <span>Brew <strong>${this._escapeHtml(this._confirmBrewProfile.name)}</strong> (${this._confirmBrewProfile.temperature}°C, ${this._confirmBrewProfile.mass_output}g)?</span>
+        </div>
+        <div class="confirm-actions">
+          <button class="btn-confirm-brew" id="btn-confirm-brew-now">
+            <ha-icon icon="mdi:play"></ha-icon>
+            <span>Brew Now</span>
+          </button>
+          <button class="btn-confirm-edit" id="btn-confirm-load-studio">
+            <span>Edit in Studio</span>
+          </button>
+          <button class="btn-confirm-dismiss" id="btn-confirm-dismiss">✕</button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderDrawer(recipeCatalog) {
+    return `
+      <div class="brew-drawer">
+        <div class="drawer-tabs">
+          <button class="tab-btn${this._activeBrewTab === "saved" ? " active" : ""}" data-tab="saved">
+            <ha-icon icon="mdi:star-outline"></ha-icon>
+            <span>Saved</span>
+          </button>
+          <button class="tab-btn${this._activeBrewTab === "search" ? " active" : ""}" data-tab="search">
+            <ha-icon icon="mdi:magnify"></ha-icon>
+            <span>Search Cloud</span>
+          </button>
+          <button class="tab-btn${this._activeBrewTab === "studio" ? " active" : ""}" data-tab="studio">
+            <ha-icon icon="mdi:chart-bell-curve-cumulative"></ha-icon>
+            <span>Curve Studio</span>
+          </button>
+        </div>
+        <div class="drawer-body">
+          ${this._renderDrawerTabContent(recipeCatalog)}
+        </div>
+      </div>
+    `;
+  }
+
+  _renderDrawerTabContent(recipeCatalog) {
+    if (this._activeBrewTab === "saved") {
+      return this._renderSavedTab(recipeCatalog);
+    }
+    if (this._activeBrewTab === "search") {
+      return this._renderSearchTab();
+    }
+    if (this._activeBrewTab === "studio") {
+      return this._renderStudioTab();
+    }
+    return "";
+  }
+
+  _renderSavedTab(catalog) {
+    const subtab = this._savedSubTab || "favorites";
+    let profiles = [];
+    if (subtab === "favorites") {
+      profiles = catalog?.favorites || [];
+    } else if (subtab === "recents") {
+      profiles = catalog?.recents || [];
+    } else if (subtab === "custom") {
+      profiles = catalog?.custom || [];
+    } else if (subtab === "machine") {
+      profiles = catalog?.machine || [];
+    }
+
+    return `
+      <div class="saved-subtabs">
+        <button class="subtab-btn${subtab === "favorites" ? " active" : ""}" data-subtab="favorites">Favorites (${(catalog?.favorites || []).length})</button>
+        <button class="subtab-btn${subtab === "recents" ? " active" : ""}" data-subtab="recents">Recent (${(catalog?.recents || []).length})</button>
+        <button class="subtab-btn${subtab === "custom" ? " active" : ""}" data-subtab="custom">Custom (${(catalog?.custom || []).length})</button>
+        <button class="subtab-btn${subtab === "machine" ? " active" : ""}" data-subtab="machine">Machine Presets</button>
+      </div>
+      ${this._renderProfileList(profiles, subtab !== "custom")}
+    `;
+  }
+
+  _renderSearchTab() {
+    return `
+      <div class="search-row">
+        <input type="text" class="search-input" id="search-input" placeholder="Search coffee, roaster, or recipe name..." value="${this._escapeHtml(this._searchQuery)}" />
+        <button class="search-submit-btn" id="btn-submit-search">
+          <ha-icon icon="mdi:magnify"></ha-icon>
+          <span>Search</span>
+        </button>
+      </div>
+      ${this._isSearching ? `
+        <div style="text-align: center; padding: 24px; color: var(--secondary-text-color, #888);">
+          <div>Searching Morning cloud recipes...</div>
+        </div>
+      ` : this._searchResults.length > 0 ? `
+        ${this._renderProfileList(this._searchResults, true)}
+      ` : this._searchQuery ? `
+        <div style="text-align: center; padding: 24px; color: var(--secondary-text-color, #888); font-size: 0.82rem;">
+          No recipes found matching "${this._escapeHtml(this._searchQuery)}".
+        </div>
+      ` : `
+        <div style="text-align: center; padding: 24px; color: var(--secondary-text-color, #777); font-size: 0.8rem;">
+          Enter a coffee bean name, roaster (e.g. "Stumptown", "April"), or origin to search cloud recipes.
+        </div>
+      `}
+    `;
+  }
+
+  _renderStudioTab() {
+    const draft = this._draftCurve;
+    const preset = this._activePresetKey || "custom";
+
+    return `
+      <div class="studio-container">
+        <!-- Presets Row -->
+        <div class="presets-row">
+          <span style="font-size: 0.72rem; color: #888; font-weight: 600; margin-right: 4px;">PRESETS:</span>
+          <button class="preset-btn${preset === "short" ? " active" : ""}" data-preset="short">Short (25g)</button>
+          <button class="preset-btn${preset === "slow" ? " active" : ""}" data-preset="slow">Slow & Steady (40g)</button>
+          <button class="preset-btn${preset === "fast" ? " active" : ""}" data-preset="fast">Fast Shot (35g)</button>
+          <button class="preset-btn${preset === "custom" ? " active" : ""}" data-preset="custom">Custom</button>
+        </div>
+
+        <!-- Interactive SVG Area -->
+        ${this._generateStudioSvg(draft)}
+
+        <!-- Numerical Steppers -->
+        <div class="studio-params-row">
+          <div class="stepper-box">
+            <div class="stepper-label">
+              <span class="stepper-label-title">Yield Output</span>
+              <span class="stepper-label-val">${draft.mass_output || 40}<span style="font-size: 0.75rem; color: #888; font-weight: 500; margin-left: 2px;">g</span></span>
+            </div>
+            <div class="stepper-controls">
+              <button class="step-ctrl-btn" data-param="mass" data-step="-5">-5</button>
+              <button class="step-ctrl-btn" data-param="mass" data-step="-1">-</button>
+              <button class="step-ctrl-btn" data-param="mass" data-step="1">+</button>
+              <button class="step-ctrl-btn" data-param="mass" data-step="5">+5</button>
+            </div>
+          </div>
+
+          <div class="stepper-box">
+            <div class="stepper-label">
+              <span class="stepper-label-title">Brew Temp</span>
+              <span class="stepper-label-val">${draft.temperature || 94}<span style="font-size: 0.75rem; color: #888; font-weight: 500; margin-left: 2px;">°C</span></span>
+            </div>
+            <div class="stepper-controls">
+              <button class="step-ctrl-btn" data-param="temp" data-step="-1">-</button>
+              <button class="step-ctrl-btn" data-param="temp" data-step="1">+</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced Bloom & Bypass Pills -->
+        <div class="advanced-pills-row">
+          <button class="adv-pill${draft.bloom_enabled ? " active" : ""}" data-toggle="bloom">
+            <ha-icon icon="mdi:water-boiler"></ha-icon>
+            <span>Bloom: ${draft.bloom_enabled ? `${draft.bloom_duration || 10}s` : "Off"}</span>
+          </button>
+          ${draft.bloom_enabled ? `
+            <div style="display: inline-flex; align-items: center; gap: 4px;">
+              <button class="step-ctrl-btn" data-param="bloom_sec" data-step="-2" style="width: 22px; height: 22px; font-size: 0.75rem;">-</button>
+              <button class="step-ctrl-btn" data-param="bloom_sec" data-step="2" style="width: 22px; height: 22px; font-size: 0.75rem;">+</button>
+            </div>
+          ` : ""}
+          <button class="adv-pill${draft.bypass_enabled ? " active" : ""}" data-toggle="bypass">
+            <ha-icon icon="mdi:call-split"></ha-icon>
+            <span>Bypass: ${draft.bypass_enabled ? "On" : "Off"}</span>
+          </button>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="studio-actions-footer">
+          <button class="btn-save-curve" id="btn-studio-save">
+            <ha-icon icon="mdi:content-save-outline"></ha-icon>
+            <span>Save Profile</span>
+          </button>
+          <button class="btn-brew-primary" id="btn-studio-brew">
+            <ha-icon icon="mdi:coffee-maker"></ha-icon>
+            <span>Brew Now (${draft.mass_output || 40}g @ ${draft.temperature || 94}°C)</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderProfileList(profiles, showRoaster = true) {
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+      return `<div style="text-align: center; padding: 20px; color: var(--secondary-text-color, #777); font-size: 0.8rem;">No profiles available in this list.</div>`;
+    }
+    return `
+      <div class="profile-list">
+        ${profiles.map((p) => this._renderProfileCard(p, showRoaster)).join("")}
+      </div>
+    `;
+  }
+
+  _renderProfileCard(profile, showRoaster = true) {
+    const jsonStr = encodeURIComponent(JSON.stringify(profile));
+    const isFav = !!profile.is_favorite;
+    const bloomText = profile.bloom_enabled ? ` • Bloom ${profile.bloom_duration || 10}s` : "";
+
+    return `
+      <div class="profile-card">
+        <div class="profile-info">
+          <div class="profile-header-line">
+            <span class="profile-name">${this._escapeHtml(profile.name || "Unnamed Profile")}</span>
+            ${showRoaster && (profile.roaster_name || profile.author_name) ? `
+              <span class="profile-roaster-badge">${this._escapeHtml(profile.roaster_name || profile.author_name)}</span>
+            ` : ""}
+          </div>
+          <div class="profile-specs">
+            <span class="highlight">${profile.temperature || 94}°C</span>
+            <span>•</span>
+            <span>${profile.mass_output || 40}g yield</span>
+            <span>${bloomText}</span>
+          </div>
+        </div>
+        ${this._renderSparklineSvg(profile.stages, profile.mass_output)}
+        <div class="profile-actions">
+          <button class="icon-action-btn fav${isFav ? " active" : ""}" data-action="toggle-fav" data-profile="${jsonStr}">
+            <ha-icon icon="${isFav ? "mdi:star" : "mdi:star-outline"}"></ha-icon>
+          </button>
+          <button class="icon-action-btn" data-action="load-studio" data-profile="${jsonStr}">
+            <ha-icon icon="mdi:tune-vertical"></ha-icon>
+          </button>
+          <button class="brew-pill-btn" data-action="brew-profile" data-profile="${jsonStr}">
+            <ha-icon icon="mdi:coffee"></ha-icon>
+            <span>Brew</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderSparklineSvg(stages, massOutput) {
+    if (!Array.isArray(stages) || stages.length < 3) {
+      return `<svg class="profile-sparkline" viewBox="0 0 70 24"></svg>`;
+    }
+    const mass = massOutput || 40;
+    const calcX = (w) => 3 + (Math.max(0, Math.min(mass, w)) / mass) * 64;
+    const calcY = (p) => 21 - ((Math.max(1, Math.min(7, p)) - 1) / 6) * 18;
+
+    const s0 = stages[0];
+    const s1 = stages[1];
+    const s2 = stages[2];
+
+    const x0 = 3;
+    const y0 = calcY(s0.pressure || 3);
+    const x1 = calcX(s1.output || 5);
+    const y1 = calcY(s1.pressure || 7);
+    const x2 = calcX(s2.output || 30);
+    const y2 = calcY(s2.pressure || 5);
+    const xEnd = 67;
+    const yEnd = y2;
+
+    const linePath = `M ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)}`;
+    const areaPath = `M ${x0} 21 L ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 21 Z`;
+
+    return `
+      <svg class="profile-sparkline" viewBox="0 0 70 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="${areaPath}" fill="rgba(230, 126, 34, 0.18)" />
+        <path d="${linePath}" fill="none" stroke="#e67e22" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    `;
+  }
+
+  _generateStudioSvg(draft) {
+    const mass = draft.mass_output || 40;
+    const calcX = (w) => 40 + (w / mass) * 350;
+    const calcY = (p) => 130 - ((p - 1) / 6) * 110;
+
+    const s0 = draft.stages && draft.stages[0] ? draft.stages[0] : { output: 0, pressure: 3 };
+    const s1 = draft.stages && draft.stages[1] ? draft.stages[1] : { output: 5, pressure: 7 };
+    const s2 = draft.stages && draft.stages[2] ? draft.stages[2] : { output: Math.round(mass * 0.8), pressure: 5 };
+
+    const x0 = 40;
+    const y0 = calcY(s0.pressure);
+    const x1 = calcX(s1.output);
+    const y1 = calcY(s1.pressure);
+    const x2 = calcX(s2.output);
+    const y2 = calcY(s2.pressure);
+    const xEnd = 390;
+    const yEnd = y2;
+
+    const linePath = `M ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)}`;
+    const areaPath = `M ${x0} 130 L ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
+
+    const pressureLevels = [1, 2, 3, 4, 5, 6, 7];
+
+    return `
+      <div class="studio-svg-box">
+        <div class="studio-floating-tooltip"></div>
+        <svg class="studio-svg" viewBox="0 0 420 160" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="studioCurveGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#e67e22" stop-opacity="0.35" />
+              <stop offset="100%" stop-color="#e67e22" stop-opacity="0.0" />
+            </linearGradient>
+          </defs>
+
+          <!-- Grid Lines & Pressure Labels -->
+          ${pressureLevels.map((p) => {
+            const py = calcY(p);
+            const isMain = p === 1 || p === 4 || p === 7;
+            return `
+              <line x1="40" y1="${py.toFixed(1)}" x2="390" y2="${py.toFixed(1)}" stroke="rgba(255,255,255,${isMain ? "0.12" : "0.04"})" stroke-dasharray="${isMain ? "none" : "2 3"}" stroke-width="1" />
+              <text x="34" y="${(py + 3).toFixed(1)}" fill="rgba(255,255,255,${isMain ? "0.5" : "0.25"})" font-size="8" text-anchor="end" font-family="sans-serif">${p}b</text>
+            `;
+          }).join("")}
+
+          <!-- Weight Axis (X) -->
+          <line x1="40" y1="130" x2="390" y2="130" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+          <text x="40" y="145" fill="rgba(255,255,255,0.4)" font-size="8" text-anchor="middle" font-family="sans-serif">0g</text>
+          <text x="${calcX(mass * 0.5).toFixed(1)}" y="145" fill="rgba(255,255,255,0.4)" font-size="8" text-anchor="middle" font-family="sans-serif">${Math.round(mass * 0.5)}g</text>
+          <text x="390" y="145" fill="rgba(255,255,255,0.4)" font-size="8" text-anchor="middle" font-family="sans-serif">${mass}g</text>
+
+          <!-- Curve Area Fill -->
+          <path class="studio-curve-area" d="${areaPath}" fill="url(#studioCurveGrad)" />
+
+          <!-- Curve Path Line -->
+          <path class="studio-curve-line" d="${linePath}" fill="none" stroke="#e67e22" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+
+          <!-- Draggable Handles -->
+          <circle class="studio-handle" data-handle="0" cx="${x0}" cy="${y0.toFixed(1)}" r="7" fill="#fff" stroke="#e67e22" stroke-width="2.5" />
+          <circle class="studio-handle" data-handle="1" cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="7" fill="#fff" stroke="#e67e22" stroke-width="2.5" />
+          <circle class="studio-handle" data-handle="2" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="7" fill="#fff" stroke="#e67e22" stroke-width="2.5" />
+        </svg>
+      </div>
+    `;
+  }
+
+  _setupStudioInteraction(box) {
+    if (!box) return;
+    const svg = box.querySelector(".studio-svg");
+    const tooltip = box.querySelector(".studio-floating-tooltip");
+    if (!svg) return;
+
+    const draft = this._draftCurve;
+    const mass = draft.mass_output || 40;
+
+    let activeHandle = null;
+    let activeIdx = -1;
+
+    const calcX = (w) => 40 + (w / mass) * 350;
+    const calcY = (p) => 130 - ((p - 1) / 6) * 110;
+    const inverseX = (x) => Math.round(((x - 40) / 350) * mass);
+    const inverseY = (y) => Math.round(1 + ((130 - y) / 110) * 6);
+
+    const updateSvg = () => {
+      const s0 = draft.stages[0];
+      const s1 = draft.stages[1];
+      const s2 = draft.stages[2];
+
+      const x0 = 40;
+      const y0 = calcY(s0.pressure);
+      const x1 = calcX(s1.output);
+      const y1 = calcY(s1.pressure);
+      const x2 = calcX(s2.output);
+      const y2 = calcY(s2.pressure);
+      const xEnd = 390;
+      const yEnd = y2;
+
+      const lineEl = svg.querySelector(".studio-curve-line");
+      const areaEl = svg.querySelector(".studio-curve-area");
+
+      const linePath = `M ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)}`;
+      const areaPath = `M ${x0} 130 L ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
+
+      if (lineEl) lineEl.setAttribute("d", linePath);
+      if (areaEl) areaEl.setAttribute("d", areaPath);
+
+      const h0 = svg.querySelector('.studio-handle[data-handle="0"]');
+      const h1 = svg.querySelector('.studio-handle[data-handle="1"]');
+      const h2 = svg.querySelector('.studio-handle[data-handle="2"]');
+
+      if (h0) {
+        h0.setAttribute("cx", String(x0));
+        h0.setAttribute("cy", y0.toFixed(1));
+      }
+      if (h1) {
+        h1.setAttribute("cx", x1.toFixed(1));
+        h1.setAttribute("cy", y1.toFixed(1));
+      }
+      if (h2) {
+        h2.setAttribute("cx", x2.toFixed(1));
+        h2.setAttribute("cy", y2.toFixed(1));
+      }
+    };
+
+    const onPointerDown = (e) => {
+      const handleEl = e.target.closest(".studio-handle");
+      if (!handleEl) return;
+      activeHandle = handleEl;
+      activeIdx = parseInt(handleEl.getAttribute("data-handle"), 10);
+      handleEl.classList.add("active");
+      try {
+        if (typeof handleEl.setPointerCapture === "function") {
+          handleEl.setPointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onPointerMove = (e) => {
+      if (!activeHandle || activeIdx < 0) return;
+      const rect = svg.getBoundingClientRect();
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      const relX = clientX - rect.left;
+      const relY = clientY - rect.top;
+      const svgX = (relX / (rect.width || 420)) * 420;
+      const svgY = (relY / (rect.height || 160)) * 160;
+
+      const pClamped = Math.max(1, Math.min(7, inverseY(svgY)));
+
+      if (activeIdx === 0) {
+        draft.stages[0].pressure = pClamped;
+        if (tooltip) {
+          tooltip.textContent = `Stage 0: 0g @ ${pClamped} bar`;
+          tooltip.style.display = "block";
+        }
+      } else if (activeIdx === 1) {
+        const wClamped = Math.max(2, Math.min(draft.stages[2].output - 2, inverseX(svgX)));
+        draft.stages[1].output = wClamped;
+        draft.stages[1].pressure = pClamped;
+        if (tooltip) {
+          tooltip.textContent = `Stage 1: ${wClamped}g @ ${pClamped} bar`;
+          tooltip.style.display = "block";
+        }
+      } else if (activeIdx === 2) {
+        const wClamped = Math.max(draft.stages[1].output + 2, Math.min(mass - 2, inverseX(svgX)));
+        draft.stages[2].output = wClamped;
+        draft.stages[2].pressure = pClamped;
+        if (tooltip) {
+          tooltip.textContent = `Stage 2: ${wClamped}g @ ${pClamped} bar`;
+          tooltip.style.display = "block";
+        }
+      }
+
+      this._activePresetKey = "custom";
+      if (box.parentElement) {
+        const presetBtns = box.parentElement.querySelectorAll(".preset-btn");
+        presetBtns.forEach((btn) => {
+          btn.classList.toggle("active", btn.getAttribute("data-preset") === "custom");
+        });
+      }
+
+      updateSvg();
+    };
+
+    const onPointerUp = (e) => {
+      if (!activeHandle) return;
+      activeHandle.classList.remove("active");
+      try {
+        if (typeof activeHandle.releasePointerCapture === "function") {
+          activeHandle.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+      activeHandle = null;
+      activeIdx = -1;
+      if (tooltip) tooltip.style.display = "none";
+    };
+
+    svg.addEventListener("pointerdown", onPointerDown);
+    svg.addEventListener("pointermove", onPointerMove);
+    svg.addEventListener("pointerup", onPointerUp);
+    svg.addEventListener("pointercancel", onPointerUp);
   }
 
   _renderDiagItem(id) {
@@ -952,12 +2570,12 @@ class MorningCoffeeCard extends HTMLElement {
                 ${
                   stats.duration > 0
                     ? `
-                  <span class="stat-chip" title="Extraction Time"><ha-icon icon="mdi:timer-outline"></ha-icon>${stats.duration}s</span>
-                  <span class="stat-chip" title="Total Yield"><ha-icon icon="mdi:coffee"></ha-icon>${stats.finalYield}g</span>
-                  <span class="stat-chip" title="Peak Flow Rate"><ha-icon icon="mdi:waves-arrow-up"></ha-icon>${stats.peakFlow} ml/s</span>
+                  <span class="stat-chip"><ha-icon icon="mdi:timer-outline"></ha-icon>${stats.duration}s</span>
+                  <span class="stat-chip"><ha-icon icon="mdi:coffee"></ha-icon>${stats.finalYield}g</span>
+                  <span class="stat-chip"><ha-icon icon="mdi:waves-arrow-up"></ha-icon>${stats.peakFlow} ml/s</span>
                   ${
                     stats.avgTemp !== "--"
-                      ? `<span class="stat-chip" title="Avg Temp"><ha-icon icon="mdi:thermometer"></ha-icon>${stats.avgTemp}°C</span>`
+                      ? `<span class="stat-chip"><ha-icon icon="mdi:thermometer"></ha-icon>${stats.avgTemp}°C</span>`
                       : ""
                   }
                 `
@@ -1083,6 +2701,14 @@ class MorningCoffeeCard extends HTMLElement {
       `;
     }
 
+    // 2.5 Brew Initiation & Controls Section
+    const showBrewControls = this._config.show_brew_controls !== false;
+    if (showBrewControls) {
+      const catalog = statusState.attributes?.recipe_catalog || {};
+      const machineId = statusState.attributes?.machine_id || "";
+      html += this._renderBrewSection(catalog, isBrewing, machineId);
+    }
+
     // 3. Water Reservoir Section
     const showWaterGauge = this._config.show_water_gauge !== false;
     if (showWaterGauge) {
@@ -1105,11 +2731,11 @@ class MorningCoffeeCard extends HTMLElement {
           <div class="reservoir-footer">
             <div class="reservoir-detail">${waterLevelMl.toFixed(0)} mL remaining</div>
             <div class="reservoir-actions">
-              <button class="action-btn purge-btn" id="purge-action" title="Record Purge Rinse">
+              <button class="action-btn purge-btn" id="purge-action">
                 <ha-icon icon="mdi:water-sync"></ha-icon>
                 <span>Purge</span>
               </button>
-              <button class="action-btn refill-btn" id="refill-action" title="Refill Reservoir">
+              <button class="action-btn refill-btn" id="refill-action">
                 <ha-icon icon="mdi:water-plus"></ha-icon>
                 <span>Refill</span>
               </button>
@@ -1137,6 +2763,28 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     root.innerHTML = html;
+
+    if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "studio") {
+      const studioSvgBox = root.querySelector(".studio-svg-box");
+      if (studioSvgBox) {
+        this._setupStudioInteraction(studioSvgBox);
+      }
+    }
+
+    if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "search") {
+      const searchInput = root.querySelector("#search-input");
+      if (searchInput) {
+        searchInput.addEventListener("input", (e) => {
+          this._searchQuery = e.target.value;
+        });
+        searchInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            this._performSearch(this._searchQuery);
+          }
+        });
+      }
+    }
 
     if (showBrewSection && showExtractionCurve) {
       const container = root.querySelector(".extraction-container");
@@ -1469,6 +3117,7 @@ class MorningCoffeeCardEditor extends HTMLElement {
     this._config = {
       show_header: true,
       show_brew_section: true,
+      show_brew_controls: true,
       show_water_gauge: true,
       show_diagnostics: true,
       status_items: [...DEFAULT_STATUS_ITEMS],
@@ -1479,6 +3128,10 @@ class MorningCoffeeCardEditor extends HTMLElement {
     } else {
       this._updateFieldValues();
     }
+  }
+
+  get hass() {
+    return this._hass;
   }
 
   set hass(hass) {
@@ -1585,6 +3238,10 @@ class MorningCoffeeCardEditor extends HTMLElement {
             <label for="show-brew">Display Brewing / Extraction Monitor</label>
           </div>
           <div class="checkbox-row">
+            <input type="checkbox" id="show-controls" />
+            <label for="show-controls">Display Brew Initiation & Controls</label>
+          </div>
+          <div class="checkbox-row">
             <input type="checkbox" id="show-curve" />
             <label for="show-curve">Display Extraction Curve (Live & Last Shot)</label>
           </div>
@@ -1656,6 +3313,7 @@ class MorningCoffeeCardEditor extends HTMLElement {
 
     bindCheckbox("show-header", "show_header");
     bindCheckbox("show-brew", "show_brew_section");
+    bindCheckbox("show-controls", "show_brew_controls");
     bindCheckbox("show-curve", "show_extraction_curve");
     bindCheckbox("show-gauge", "show_water_gauge");
     bindCheckbox("show-diag", "show_diagnostics");
@@ -1691,6 +3349,7 @@ class MorningCoffeeCardEditor extends HTMLElement {
 
     setChecked("show-header", this._config.show_header !== false && this._config.show_title !== false);
     setChecked("show-brew", this._config.show_brew_section !== false);
+    setChecked("show-controls", this._config.show_brew_controls !== false);
     setChecked("show-curve", this._config.show_extraction_curve !== false);
     setChecked("show-gauge", this._config.show_water_gauge !== false);
     setChecked("show-diag", this._config.show_diagnostics !== false);

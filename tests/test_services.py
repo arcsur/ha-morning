@@ -6,14 +6,19 @@ from unittest.mock import AsyncMock, MagicMock
 from custom_components.morning.const import (
     ATTR_AMOUNT_ML,
     DOMAIN,
+    SERVICE_BREW_RECIPE,
+    SERVICE_CANCEL_BREW,
     SERVICE_CHECK_UPDATES,
     SERVICE_RECORD_PURGE,
     SERVICE_REFILL_WATER,
     SERVICE_RESET_MACHINE,
+    SERVICE_SAVE_PROFILE,
+    SERVICE_SEARCH_RECIPES,
     SERVICE_SET_STANDBY_TIMEOUT,
+    SERVICE_TOGGLE_FAVORITE,
 )
 from custom_components.morning.coordinator import MorningDataUpdateCoordinator
-from custom_components.morning.models import MorningMachine
+from custom_components.morning.models import MorningMachine, MorningRecipe
 from custom_components.morning.services import async_setup_services, async_unload_services
 
 
@@ -28,7 +33,7 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         def mock_has_service(domain, service):
             return service in self.registered_services
 
-        def mock_register(domain, service, handler, schema=None):
+        def mock_register(domain, service, handler, schema=None, **kwargs):
             self.registered_services[service] = handler
 
         def mock_remove(domain, service):
@@ -44,7 +49,21 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         self.coordinator.client.set_standby_timeout = AsyncMock()
         self.coordinator.client.reset_machine = AsyncMock()
         self.coordinator.client.check_updates = AsyncMock()
+        self.coordinator.client.search_recipes = AsyncMock(
+            return_value=[MorningRecipe(name="Onyx Espresso", temperature=93, mass_output=38)]
+        )
         self.coordinator.async_request_refresh = AsyncMock()
+        self.coordinator.async_brew_recipe = AsyncMock()
+        self.coordinator.async_cancel_brew = AsyncMock()
+        self.coordinator.async_save_profile = AsyncMock(
+            return_value=MorningRecipe(name="Saved Test", temperature=94, mass_output=40)
+        )
+        self.coordinator.async_toggle_favorite = AsyncMock(return_value=True)
+        self.coordinator.get_recipe_catalog = MagicMock(
+            return_value={
+                "quick_profiles": [{"id": 1, "name": "Catalog Recipe", "temperature": 94, "mass_output": 40}]
+            }
+        )
 
         self.hass.data = {
             DOMAIN: {
@@ -106,6 +125,50 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         await self.registered_services[SERVICE_RECORD_PURGE](call)
         self.coordinator.record_purge.assert_called_with("M_123", amount_ml=40)
 
+        # 8. Test brew_recipe with custom params
+        call = MagicMock()
+        call.data = {"machine_id": "M_123", "name": "Espresso Shot", "temperature": 95, "mass_output": 36}
+        await self.registered_services[SERVICE_BREW_RECIPE](call)
+        self.coordinator.async_brew_recipe.assert_called_once()
+        brewed_recipe = self.coordinator.async_brew_recipe.call_args[0][1]
+        self.assertEqual(brewed_recipe.name, "Espresso Shot")
+        self.assertEqual(brewed_recipe.temperature, 95)
+        self.assertEqual(brewed_recipe.mass_output, 36)
+
+        # 9. Test brew_recipe recalling catalog profile
+        call = MagicMock()
+        call.data = {"machine_id": "M_123", "profile_id": 1}
+        await self.registered_services[SERVICE_BREW_RECIPE](call)
+        self.assertEqual(self.coordinator.async_brew_recipe.call_count, 2)
+
+        # 10. Test cancel_brew
+        call = MagicMock()
+        call.data = {"machine_id": "M_123"}
+        await self.registered_services[SERVICE_CANCEL_BREW](call)
+        self.coordinator.async_cancel_brew.assert_called_once_with("M_123")
+
+        # 11. Test search_recipes
+        call = MagicMock()
+        call.data = {"query": "Onyx"}
+        search_res = await self.registered_services[SERVICE_SEARCH_RECIPES](call)
+        self.assertIn("recipes", search_res)
+        self.assertEqual(len(search_res["recipes"]), 1)
+        self.assertEqual(search_res["recipes"][0]["name"], "Onyx Espresso")
+
+        # 12. Test save_profile
+        call = MagicMock()
+        call.data = {"name": "Saved Test", "temperature": 94, "mass_output": 40}
+        save_res = await self.registered_services[SERVICE_SAVE_PROFILE](call)
+        self.coordinator.async_save_profile.assert_called_once()
+        self.assertIn("profile", save_res)
+
+        # 13. Test toggle_favorite
+        call = MagicMock()
+        call.data = {"profile_id": 123}
+        fav_res = await self.registered_services[SERVICE_TOGGLE_FAVORITE](call)
+        self.coordinator.async_toggle_favorite.assert_called_once_with(123, None)
+        self.assertTrue(fav_res["is_favorite"])
+
     async def test_unload_services(self):
         """Test unloading services."""
         await async_setup_services(self.hass)
@@ -114,6 +177,11 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(SERVICE_SET_STANDBY_TIMEOUT, self.registered_services)
         self.assertNotIn(SERVICE_RECORD_PURGE, self.registered_services)
         self.assertNotIn(SERVICE_REFILL_WATER, self.registered_services)
+        self.assertNotIn(SERVICE_BREW_RECIPE, self.registered_services)
+        self.assertNotIn(SERVICE_CANCEL_BREW, self.registered_services)
+        self.assertNotIn(SERVICE_SEARCH_RECIPES, self.registered_services)
+        self.assertNotIn(SERVICE_SAVE_PROFILE, self.registered_services)
+        self.assertNotIn(SERVICE_TOGGLE_FAVORITE, self.registered_services)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 """Unit tests for Morning integration setup and teardown."""
 
+import os
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,8 +26,10 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        self.tmp_dir = tempfile.TemporaryDirectory()
         self.hass = MagicMock()
         self.hass.data = {}
+        self.hass.config.path.side_effect = lambda *args: os.path.join(self.tmp_dir.name, *args)
         self.hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         self.hass.config_entries = MagicMock()
         self.hass.config_entries.async_forward_entry_setups = AsyncMock()
@@ -42,6 +46,10 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             CONF_REFRESH_TOKEN: "ref",
             CONF_TOKEN_EXPIRES_AT: 9999999999.0,
         }
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.tmp_dir.cleanup()
 
     @patch("custom_components.morning.MorningDataUpdateCoordinator.async_config_entry_first_refresh", new_callable=AsyncMock)
     @patch("custom_components.morning.MorningIotListener.start")
@@ -104,7 +112,7 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
             await _async_register_frontend(self.hass)
             self.assertTrue(self.hass.data.get("morning_frontend_registered"))
             self.hass.http.async_register_static_paths.assert_called_once()
-            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.8")
+            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.5.0")
 
             # Subsequent call should be a no-op due to idempotency guard
             await _async_register_frontend(self.hass)

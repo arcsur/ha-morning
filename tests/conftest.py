@@ -118,6 +118,21 @@ if "homeassistant" not in sys.modules:
             def async_show_form(self, *, step_id: str, data_schema=None, errors=None):
                 return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors or {}}
 
+        class MockStore:
+            """Stub Store."""
+
+            def __init__(self, hass, version, key, **kwargs):
+                self.hass = hass
+                self.version = version
+                self.key = key
+                self._data = None
+
+            async def async_load(self):
+                return self._data
+
+            async def async_save(self, data):
+                self._data = data
+
         ha_mock = MagicMock()
         ha_mock.const.Platform = MagicMock()
         ha_mock.const.Platform.SENSOR = "sensor"
@@ -195,6 +210,9 @@ if "homeassistant" not in sys.modules:
         sys.modules["homeassistant.helpers.config_validation"].multi_select = lambda opts: lambda val: val
         sys.modules["homeassistant.helpers.device_registry"] = ha_mock.helpers.device_registry
         sys.modules["homeassistant.helpers.entity_platform"] = ha_mock.helpers.entity_platform
+        ha_mock.helpers.storage = MagicMock()
+        ha_mock.helpers.storage.Store = MockStore
+        sys.modules["homeassistant.helpers.storage"] = ha_mock.helpers.storage
         sys.modules["homeassistant.helpers.update_coordinator"] = ha_mock.helpers.update_coordinator
         sys.modules["homeassistant.helpers.update_coordinator"].DataUpdateCoordinator = MockDataUpdateCoordinator
         sys.modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = MockCoordinatorEntity

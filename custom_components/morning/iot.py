@@ -10,11 +10,13 @@ import logging
 import struct
 import time
 import urllib.parse
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from .client import MorningConnectionError
 from .const import (
     AWS_IOT_ENDPOINT,
     AWS_IOT_POLICY_NAME,
@@ -23,7 +25,7 @@ from .const import (
     COGNITO_REGION,
     COGNITO_USER_POOL_ID,
 )
-from .models import MorningLiveBrewTelemetry
+from .models import MorningLiveBrewTelemetry, MorningRecipe
 
 if TYPE_CHECKING:
     from .client import MorningClient
@@ -191,6 +193,17 @@ def encode_mqtt_subscribe(topic: str, packet_id: int = 1, qos: int = 1) -> bytes
 def encode_mqtt_puback(packet_id: int) -> bytes:
     """Construct MQTT 3.1.1 PUBACK packet for QoS 1 messages."""
     return bytes([0x40, 0x02]) + struct.pack("!H", packet_id)
+
+
+def encode_mqtt_publish(topic: str, payload: bytes, packet_id: int = 1, qos: int = 1) -> bytes:
+    """Construct MQTT 3.1.1 PUBLISH packet."""
+    topic_bytes = topic.encode("utf-8")
+    var_header = struct.pack("!H", len(topic_bytes)) + topic_bytes
+    if qos > 0:
+        var_header += struct.pack("!H", packet_id)
+    first_byte = 0x30 | ((qos & 0x03) << 1)
+    rem_len = encode_mqtt_varlen(len(var_header) + len(payload))
+    return bytes([first_byte]) + rem_len + var_header + payload
 
 
 def decode_mqtt_publish_packet(data: bytes) -> tuple[str, bytes, int | None] | None:
@@ -401,6 +414,10 @@ class MorningIotListener:
         self._identity_id: str | None = None
         self._credentials: dict[str, str] | None = None
         self._creds_obtained_at: float = 0.0
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._ws_lock = asyncio.Lock()
+        self._app_id = str(uuid.uuid4())
+        self._packet_id_counter = 1
 
     def _evict_iot_pool(self) -> None:
         """Close pooled keep-alive REST sockets to AWS_IOT_ENDPOINT before WebSocket upgrade."""
@@ -430,6 +447,7 @@ class MorningIotListener:
         """Stop listener background tasks."""
         self._running = False
         self.is_connected = False
+        self._ws = None
         for task in (self._task, self._shadow_task):
             if task and not task.done():
                 task.cancel()
@@ -690,6 +708,7 @@ class MorningIotListener:
                         raise RuntimeError(f"MQTT broker rejected connection: return_code={connack_rc}")
 
                     self.is_connected = True
+                    self._ws = ws
                     if self.coordinator and hasattr(self.coordinator, "async_update_listeners"):
                         self.coordinator.async_update_listeners()
                     _LOGGER.info("MQTT session accepted by broker (CONNACK return_code=0)")
@@ -761,6 +780,7 @@ class MorningIotListener:
                             break
 
                     self.is_connected = False
+                    self._ws = None
 
                 # Sleep before reconnecting if WebSocket closed
                 if self._running:
@@ -769,9 +789,127 @@ class MorningIotListener:
 
             except asyncio.CancelledError:
                 self.is_connected = False
+                self._ws = None
                 break
             except Exception as err:
                 self.is_connected = False
+                self._ws = None
                 _LOGGER.warning("Morning IoT live stream error: %s (retrying in %ds)", err, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(60, backoff * 2)
+
+    async def async_publish_command(self, payload_dict: dict[str, Any]) -> None:
+        """Publish a command to the Morning IoT command topic."""
+        if not self._identity_id:
+            res = await self._get_credentials_and_identity()
+            if not res:
+                raise MorningConnectionError("Unable to acquire Cognito credentials for IoT command")
+
+        # Wait up to 3 seconds if listener is currently reconnecting
+        for _ in range(30):
+            if self._ws is not None and not self._ws.closed and self.is_connected:
+                break
+            await asyncio.sleep(0.1)
+
+        async with self._ws_lock:
+            if self._ws is None or self._ws.closed:
+                raise MorningConnectionError("Morning IoT live MQTT connection is not active")
+
+            topic = f"PROD/user/{self._identity_id}/{self._app_id}/command"
+            payload_bytes = json.dumps(payload_dict, separators=(",", ":")).encode("utf-8")
+            self._packet_id_counter = (self._packet_id_counter % 65535) + 1
+            pkt = encode_mqtt_publish(topic, payload_bytes, packet_id=self._packet_id_counter, qos=1)
+            _LOGGER.debug(
+                "Publishing IoT command to %s (len=%d): %s",
+                topic,
+                len(payload_bytes),
+                payload_dict,
+            )
+            await self._ws.send_bytes(pkt)
+
+    async def async_brew_coffee(self, machine_id: str, recipe: MorningRecipe) -> None:
+        """Initiate coffee extraction on the machine via AWS IoT MQTT."""
+        if not self._identity_id:
+            res = await self._get_credentials_and_identity()
+            if not res:
+                raise MorningConnectionError("Unable to acquire Cognito credentials for IoT brew")
+
+        app_user_id = (
+            self.client.auth_session.user_id
+            if self.client and self.client.auth_session and self.client.auth_session.user_id
+            else self._identity_id
+        )
+        payload = {
+            "action": "BREW",
+            "apiVersion": 2,
+            "userId": self._identity_id,
+            "appUserId": app_user_id,
+            "machineId": machine_id,
+            "appId": self._app_id,
+            "data": recipe.to_iot_request_data(),
+        }
+        _LOGGER.info(
+            "Sending BREW command to machine %s: %s (%d°C, %dg)",
+            machine_id,
+            recipe.name,
+            recipe.temperature,
+            recipe.mass_output,
+        )
+        await self.async_publish_command(payload)
+
+        # Optimistically mark machine as heating so UI and coordinator respond immediately
+        if self.coordinator:
+            self.coordinator.handle_live_brew_update(
+                machine_id,
+                MorningLiveBrewTelemetry(
+                    stage="heating",
+                    temperature=0,
+                    water_output=0.0,
+                    mass_output=0.0,
+                    bloom_lapse=0,
+                    is_brewing=True,
+                    last_updated=time.time(),
+                    source="command",
+                ),
+            )
+
+    async def async_cancel_brew(self, machine_id: str) -> None:
+        """Cancel an ongoing coffee extraction on the machine via AWS IoT MQTT."""
+        if not self._identity_id:
+            res = await self._get_credentials_and_identity()
+            if not res:
+                raise MorningConnectionError("Unable to acquire Cognito credentials for IoT cancel")
+
+        app_user_id = (
+            self.client.auth_session.user_id
+            if self.client and self.client.auth_session and self.client.auth_session.user_id
+            else self._identity_id
+        )
+        payload = {
+            "action": "CANCEL",
+            "apiVersion": 2,
+            "userId": self._identity_id,
+            "appUserId": app_user_id,
+            "machineId": machine_id,
+            "appId": self._app_id,
+            "data": None,
+        }
+        _LOGGER.info("Sending CANCEL command to machine %s", machine_id)
+        await self.async_publish_command(payload)
+
+        # Optimistically mark brew as cancelled
+        if self.coordinator:
+            self.coordinator.handle_live_brew_update(
+                machine_id,
+                MorningLiveBrewTelemetry(
+                    stage="cancel",
+                    temperature=0,
+                    water_output=0.0,
+                    mass_output=0.0,
+                    bloom_lapse=0,
+                    is_brewing=False,
+                    last_updated=time.time(),
+                    source="command",
+                ),
+            )
+

@@ -25,6 +25,42 @@ export class MockHassManager {
       },
       callWS: (msg) => {
         this.logEvent(`callWS: ${msg.type}`, msg);
+        if (msg.service === "search_recipes") {
+          return Promise.resolve({
+            response: {
+              recipes: [
+                {
+                  id: "cloud-101",
+                  name: `${msg.service_data?.query || "Specialty"} Gesha Lot 1`,
+                  roaster_name: "Morning Curated",
+                  temperature: 94,
+                  mass_output: 38,
+                  bloom_enabled: true,
+                  bloom_duration: 12,
+                  stages: [
+                    { id: 0, output: 0, pressure: 2 },
+                    { id: 1, output: 6, pressure: 7 },
+                    { id: 2, output: 30, pressure: 5 },
+                  ],
+                },
+                {
+                  id: "cloud-102",
+                  name: `${msg.service_data?.query || "Natural"} Anaerobic Filter`,
+                  roaster_name: "Sey Coffee",
+                  temperature: 92,
+                  mass_output: 45,
+                  bloom_enabled: true,
+                  bloom_duration: 15,
+                  stages: [
+                    { id: 0, output: 0, pressure: 3 },
+                    { id: 1, output: 8, pressure: 6 },
+                    { id: 2, output: 35, pressure: 5 },
+                  ],
+                },
+              ],
+            },
+          });
+        }
         return Promise.resolve();
       },
     };

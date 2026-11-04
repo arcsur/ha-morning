@@ -280,3 +280,191 @@ class MorningAuthSession:
             email=data.get("email", ""),
             user_id=data.get("user_id"),
         )
+
+
+@dataclass
+class MorningRecipe:
+    """Represents a brew recipe / profile for the Morning machine."""
+
+    id: int = 0
+    name: str = "Morning from Home Assistant"
+    roaster_name: str = ""
+    owner_type: str = "USER_RECIPE"
+    type: str = "COFFEE_RECIPE"
+    temperature: int = 94
+    mass_output: int = 40
+    water_output: int = 0
+    bloom_duration: int | None = None
+    stages: list[dict[str, int]] = field(
+        default_factory=lambda: [
+            {"id": 0, "output": 0, "pressure": 3},
+            {"id": 1, "output": 5, "pressure": 7},
+            {"id": 2, "output": 35, "pressure": 5},
+        ]
+    )
+    is_favorite: bool = False
+    source: str = "user"  # machine, favorite, recent, user, roaster, local
+
+    def to_iot_recipe_dict(self) -> dict[str, Any]:
+        """Convert to the exact recipe object expected by Morning IoT MQTT."""
+        return {
+            "id": self.id,
+            "type": self.type,
+            "ownerType": self.owner_type,
+            "name": self.name,
+            "isFavorite": self.is_favorite,
+            "isModifiable": False,
+            "isNew": False,
+            "syncedToMachine": None,
+            "temperature": self.temperature,
+            "massOutput": self.mass_output,
+            "waterOutput": self.water_output,
+            "bloomDuration": self.bloom_duration,
+            "pressureProfile": {
+                "id": 0,
+                "name": "Custom",
+                "active": True,
+                "stageDtos": [
+                    {
+                        "id": s.get("id", i),
+                        "output": int(s.get("output", 0)),
+                        "pressure": int(s.get("pressure", 7)),
+                    }
+                    for i, s in enumerate(self.stages)
+                ],
+            },
+            "capsule": None,
+            "roaster": None,
+            "user": None,
+            "productStore": None,
+        }
+
+    def to_iot_request_data(self) -> dict[str, Any]:
+        """Convert to data envelope for BrewCoffee.Request."""
+        return {
+            "type": self.type,
+            "ownerType": self.owner_type,
+            "recipe": self.to_iot_recipe_dict(),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert recipe to dictionary for HA sensor state attributes & storage."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "roaster_name": self.roaster_name,
+            "owner_type": self.owner_type,
+            "type": self.type,
+            "temperature": self.temperature,
+            "mass_output": self.mass_output,
+            "water_output": self.water_output,
+            "bloom_duration": self.bloom_duration,
+            "stages": [
+                {
+                    "id": s.get("id", i),
+                    "output": int(s.get("output", 0)),
+                    "pressure": int(s.get("pressure", 7)),
+                }
+                for i, s in enumerate(self.stages)
+            ],
+            "is_favorite": self.is_favorite,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MorningRecipe:
+        """Restore recipe from dictionary."""
+        stages_data = data.get("stages") or []
+        stages = [
+            {
+                "id": s.get("id", i),
+                "output": int(s.get("output", 0)),
+                "pressure": int(s.get("pressure", 7)),
+            }
+            for i, s in enumerate(stages_data)
+        ]
+        if not stages:
+            mass = int(data.get("mass_output") or 40)
+            stages = [
+                {"id": 0, "output": 0, "pressure": 3},
+                {"id": 1, "output": min(5, max(2, mass - 5)), "pressure": 7},
+                {"id": 2, "output": max(5, mass - 5), "pressure": 5},
+            ]
+
+        return cls(
+            id=int(data.get("id", 0)),
+            name=str(data.get("name") or "Morning Recipe"),
+            roaster_name=str(data.get("roaster_name") or ""),
+            owner_type=str(data.get("owner_type") or "USER_RECIPE"),
+            type=str(data.get("type") or "COFFEE_RECIPE"),
+            temperature=int(data.get("temperature") or 94),
+            mass_output=int(data.get("mass_output") or 40),
+            water_output=int(data.get("water_output") or 0),
+            bloom_duration=int(data["bloom_duration"]) if data.get("bloom_duration") is not None else None,
+            stages=stages,
+            is_favorite=bool(data.get("is_favorite", False)),
+            source=str(data.get("source") or "local"),
+        )
+
+    @classmethod
+    def from_api_json(cls, raw: dict[str, Any], source: str = "user") -> MorningRecipe:
+        """Parse recipe from Morning Cloud REST API response."""
+        data = raw.get("recipe") if isinstance(raw.get("recipe"), dict) else raw
+
+        roaster_info = data.get("roaster")
+        roaster_name = ""
+        if isinstance(roaster_info, dict):
+            roaster_name = str(roaster_info.get("name") or "")
+        elif isinstance(roaster_info, str):
+            roaster_name = roaster_info
+        elif "roaster_name" in data:
+            roaster_name = str(data["roaster_name"])
+
+        mass_output = int(data.get("massOutput") or data.get("mass_output") or 40)
+        water_output = int(data.get("waterOutput") or data.get("water_output") or 0)
+        temperature = int(data.get("temperature") or data.get("temp") or 94)
+
+        bloom_val = data.get("bloomDuration") if "bloomDuration" in data else data.get("bloom_duration")
+        bloom_duration = int(bloom_val) if bloom_val is not None else None
+
+        stages: list[dict[str, int]] = []
+        profile = data.get("pressureProfile") or data.get("pressure_profile")
+        if isinstance(profile, dict) and "stageDtos" in profile and isinstance(profile["stageDtos"], list):
+            for i, st in enumerate(profile["stageDtos"]):
+                if isinstance(st, dict):
+                    stages.append({
+                        "id": int(st.get("id", i)),
+                        "output": int(st.get("output", 0)),
+                        "pressure": int(st.get("pressure", 7)),
+                    })
+        elif "stages" in data and isinstance(data["stages"], list):
+            for i, st in enumerate(data["stages"]):
+                if isinstance(st, dict):
+                    stages.append({
+                        "id": int(st.get("id", i)),
+                        "output": int(st.get("output", 0)),
+                        "pressure": int(st.get("pressure", 7)),
+                    })
+
+        if not stages:
+            stages = [
+                {"id": 0, "output": 0, "pressure": 3},
+                {"id": 1, "output": min(5, max(2, mass_output - 5)), "pressure": 7},
+                {"id": 2, "output": max(5, mass_output - 5), "pressure": 5},
+            ]
+
+        return cls(
+            id=int(data.get("id", 0)),
+            name=str(data.get("name") or "Morning Recipe"),
+            roaster_name=roaster_name,
+            owner_type=str(data.get("ownerType") or data.get("owner_type") or "USER_RECIPE"),
+            type=str(data.get("type") or "COFFEE_RECIPE"),
+            temperature=temperature,
+            mass_output=mass_output,
+            water_output=water_output,
+            bloom_duration=bloom_duration,
+            stages=stages,
+            is_favorite=bool(data.get("isFavorite") or data.get("is_favorite") or False),
+            source=source,
+        )
+

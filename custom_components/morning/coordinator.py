@@ -10,6 +10,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import MorningAuthError, MorningClient, MorningConnectionError, MorningError
@@ -34,7 +35,7 @@ from .const import (
     WATER_LEVEL_LOW,
     WATER_LEVEL_NORMAL,
 )
-from .models import MorningLiveBrewTelemetry, MorningMachine
+from .models import MorningLiveBrewTelemetry, MorningMachine, MorningRecipe
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +84,18 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         self._mqtt_live_active: dict[str, bool] = {}
         self._last_mqtt_packet_ts: dict[str, float] = {}
         self.iot_listener: Any = None
+
+        # Local storage & catalog
+        self._store = Store(hass, 1, f"morning_profiles_{entry.entry_id}")
+        self._custom_profiles: list[dict[str, Any]] = []
+        self._favorite_ids: list[str | int] = []
+        self._recent_brews: list[dict[str, Any]] = []
+        self._storage_loaded = False
+        self.machine_recipes: list[MorningRecipe] = []
+        self.cloud_favorites: list[MorningRecipe] = []
+        self.cloud_recents: list[MorningRecipe] = []
+        self.user_recipes: list[MorningRecipe] = []
+        self._last_catalog_sync: float = 0.0
 
     def _record_stage(self, machine_id: str, stage: str) -> list[str]:
         """Record an observed brew stage in chronological order for a machine."""
@@ -754,9 +767,276 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         if changed:
             self.async_update_listeners()
 
+    async def async_load_storage(self) -> None:
+        """Load local custom profiles, favorites, and recent brews from HA storage."""
+        if self._storage_loaded:
+            return
+        try:
+            data = await self._store.async_load()
+            if isinstance(data, dict):
+                self._custom_profiles = data.get("custom_profiles") or []
+                self._favorite_ids = data.get("favorite_ids") or []
+                self._recent_brews = data.get("recent_brews") or []
+        except Exception as err:
+            _LOGGER.warning("Error loading Morning local profile storage: %s", err)
+        self._storage_loaded = True
+
+    async def async_save_storage(self) -> None:
+        """Persist local custom profiles, favorites, and recent brews to HA storage."""
+        try:
+            await self._store.async_save(
+                {
+                    "custom_profiles": self._custom_profiles,
+                    "favorite_ids": self._favorite_ids,
+                    "recent_brews": self._recent_brews,
+                }
+            )
+        except Exception as err:
+            _LOGGER.warning("Error saving Morning local profile storage: %s", err)
+
+    async def async_sync_recipe_catalog(self, force: bool = False) -> None:
+        """Sync recipes from Morning Cloud REST API."""
+        now = time.time()
+        if not force and self._last_catalog_sync > 0 and (now - self._last_catalog_sync) < 900:
+            return
+
+        try:
+            machine_recs = await self.client.get_machine_recipes()
+            if machine_recs:
+                self.machine_recipes = machine_recs
+        except Exception as err:
+            _LOGGER.debug("Error updating machine recipes: %s", err)
+
+        try:
+            favs = await self.client.get_favorite_recipes()
+            if favs:
+                self.cloud_favorites = favs
+        except Exception as err:
+            _LOGGER.debug("Error updating favorite recipes: %s", err)
+
+        try:
+            recents = await self.client.get_recent_recipes()
+            if recents:
+                self.cloud_recents = recents
+        except Exception as err:
+            _LOGGER.debug("Error updating recent recipes: %s", err)
+
+        try:
+            users = await self.client.get_user_recipes()
+            if users:
+                self.user_recipes = users
+        except Exception as err:
+            _LOGGER.debug("Error updating user recipes: %s", err)
+
+        self._last_catalog_sync = now
+
+    def get_recipe_catalog(self, machine_id: str | None = None) -> dict[str, Any]:
+        """Return catalog of profiles (quick, favorites, recents, machine, custom)."""
+        custom_list = list(self._custom_profiles)
+
+        fav_list: list[dict[str, Any]] = []
+        fav_keys: set[str] = set()
+        for f in self.cloud_favorites:
+            d = f.to_dict()
+            key = f"{d['name'].lower()}::{d['temperature']}::{d['mass_output']}"
+            if key not in fav_keys:
+                fav_keys.add(key)
+                fav_list.append(d)
+
+        for cp in self._custom_profiles:
+            cp_id = cp.get("id")
+            if cp_id in self._favorite_ids or cp.get("is_favorite"):
+                cp_copy = dict(cp)
+                cp_copy["is_favorite"] = True
+                key = f"{cp_copy['name'].lower()}::{cp_copy['temperature']}::{cp_copy['mass_output']}"
+                if key not in fav_keys:
+                    fav_keys.add(key)
+                    fav_list.append(cp_copy)
+
+        recent_list: list[dict[str, Any]] = []
+        recent_keys: set[str] = set()
+        for r in self._recent_brews:
+            key = f"{r.get('name', '').lower()}::{r.get('temperature')}::{r.get('mass_output')}"
+            if key not in recent_keys:
+                recent_keys.add(key)
+                recent_list.append(r)
+
+        for cr in self.cloud_recents:
+            d = cr.to_dict()
+            key = f"{d['name'].lower()}::{d['temperature']}::{d['mass_output']}"
+            if key not in recent_keys and len(recent_list) < 10:
+                recent_keys.add(key)
+                recent_list.append(d)
+
+        machine_list = [r.to_dict() for r in self.machine_recipes]
+        if not machine_list and self.user_recipes:
+            machine_list = [r.to_dict() for r in self.user_recipes[:10]]
+
+        quick_list: list[dict[str, Any]] = []
+        quick_keys: set[str] = set()
+
+        for item in fav_list[:2]:
+            key = f"{item['name'].lower()}::{item['temperature']}::{item['mass_output']}"
+            if key not in quick_keys:
+                quick_keys.add(key)
+                quick_list.append(item)
+
+        for item in recent_list[:3]:
+            key = f"{item['name'].lower()}::{item['temperature']}::{item['mass_output']}"
+            if key not in quick_keys and len(quick_list) < 4:
+                quick_keys.add(key)
+                quick_list.append(item)
+
+        if not quick_list:
+            quick_list = [
+                {
+                    "id": -101,
+                    "name": "Short",
+                    "roaster_name": "Morning Preset",
+                    "temperature": 94,
+                    "mass_output": 40,
+                    "water_output": 0,
+                    "bloom_duration": None,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 5, "pressure": 7},
+                        {"id": 2, "output": 35, "pressure": 5},
+                    ],
+                    "is_favorite": True,
+                    "source": "preset",
+                },
+                {
+                    "id": -102,
+                    "name": "Slow & Steady",
+                    "roaster_name": "Morning Preset",
+                    "temperature": 93,
+                    "mass_output": 40,
+                    "water_output": 0,
+                    "bloom_duration": 10,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 10, "pressure": 7},
+                        {"id": 2, "output": 38, "pressure": 5},
+                    ],
+                    "is_favorite": True,
+                    "source": "preset",
+                },
+                {
+                    "id": -103,
+                    "name": "Fast Shot",
+                    "roaster_name": "Morning Preset",
+                    "temperature": 94,
+                    "mass_output": 40,
+                    "water_output": 0,
+                    "bloom_duration": None,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 2, "pressure": 7},
+                        {"id": 2, "output": 30, "pressure": 5},
+                    ],
+                    "is_favorite": False,
+                    "source": "preset",
+                },
+            ]
+
+        return {
+            "quick_profiles": quick_list,
+            "favorite_profiles": fav_list,
+            "recent_profiles": recent_list,
+            "machine_profiles": machine_list,
+            "custom_profiles": custom_list,
+        }
+
+    async def async_record_recent_brew(self, recipe: MorningRecipe) -> None:
+        """Prepend a brewed recipe to recent brews in storage."""
+        await self.async_load_storage()
+        d = recipe.to_dict()
+        key = f"{d['name'].lower()}::{d['temperature']}::{d['mass_output']}"
+        self._recent_brews = [
+            r
+            for r in self._recent_brews
+            if f"{r.get('name', '').lower()}::{r.get('temperature')}::{r.get('mass_output')}" != key
+        ]
+        self._recent_brews.insert(0, d)
+        if len(self._recent_brews) > 10:
+            self._recent_brews = self._recent_brews[:10]
+        await self.async_save_storage()
+        self.async_update_listeners()
+
+    async def async_save_profile(self, profile_dict: dict[str, Any]) -> MorningRecipe:
+        """Save or update a custom brew curve profile in storage."""
+        await self.async_load_storage()
+        recipe = MorningRecipe.from_dict(profile_dict)
+        if recipe.id == 0:
+            recipe.id = int(time.time() * 1000) % 10000000
+
+        d = recipe.to_dict()
+        self._custom_profiles = [
+            p
+            for p in self._custom_profiles
+            if p.get("id") != recipe.id and p.get("name") != recipe.name
+        ]
+        self._custom_profiles.insert(0, d)
+        if recipe.is_favorite and recipe.id not in self._favorite_ids:
+            self._favorite_ids.append(recipe.id)
+        elif not recipe.is_favorite and recipe.id in self._favorite_ids:
+            self._favorite_ids.remove(recipe.id)
+
+        await self.async_save_storage()
+        self.async_update_listeners()
+        return recipe
+
+    async def async_toggle_favorite(
+        self, profile_id: int | str, recipe_dict: dict[str, Any] | None = None
+    ) -> bool:
+        """Toggle favorite status for a recipe in storage."""
+        await self.async_load_storage()
+        is_fav = False
+        if profile_id in self._favorite_ids:
+            self._favorite_ids.remove(profile_id)
+            is_fav = False
+        else:
+            self._favorite_ids.append(profile_id)
+            is_fav = True
+
+        for cp in self._custom_profiles:
+            if cp.get("id") == profile_id or str(cp.get("id")) == str(profile_id):
+                cp["is_favorite"] = is_fav
+
+        if is_fav and recipe_dict:
+            rec = MorningRecipe.from_dict(recipe_dict)
+            rec.is_favorite = True
+            d = rec.to_dict()
+            if not any(
+                cp.get("id") == rec.id or cp.get("name") == rec.name
+                for cp in self._custom_profiles
+            ):
+                self._custom_profiles.append(d)
+
+        await self.async_save_storage()
+        self.async_update_listeners()
+        return is_fav
+
+    async def async_brew_recipe(self, machine_id: str, recipe: MorningRecipe) -> None:
+        """Initiate brewing a recipe on a machine and record it in recent brews."""
+        if not self.iot_listener:
+            raise MorningError("Morning IoT listener not initialized")
+
+        await self.async_record_recent_brew(recipe)
+        await self.iot_listener.async_brew_coffee(machine_id, recipe)
+
+    async def async_cancel_brew(self, machine_id: str) -> None:
+        """Cancel ongoing extraction on machine."""
+        if not self.iot_listener:
+            raise MorningError("Morning IoT listener not initialized")
+
+        await self.iot_listener.async_cancel_brew(machine_id)
+
     async def _async_update_data(self) -> dict[str, MorningMachine]:
         """Fetch latest telemetry and status for all user machines."""
         try:
+            await self.async_load_storage()
+            await self.async_sync_recipe_catalog()
             machines = await self.client.get_machines()
 
             if self.iot_listener is not None and hasattr(

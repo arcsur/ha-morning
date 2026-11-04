@@ -12,11 +12,12 @@ from custom_components.morning.iot import (
     decode_mqtt_publish_packet,
     encode_mqtt_connect,
     encode_mqtt_puback,
+    encode_mqtt_publish,
     encode_mqtt_subscribe,
     sign_iot_websocket_url,
     sign_sigv4_headers,
 )
-from custom_components.morning.models import MorningMachine
+from custom_components.morning.models import MorningMachine, MorningRecipe
 
 
 class TestMorningIot(unittest.IsolatedAsyncioTestCase):
@@ -329,6 +330,84 @@ class TestMorningIot(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(tc)
             self.assertEqual(tc.stage, "cancel")
             self.assertFalse(tc.is_brewing)
+
+    def test_encode_mqtt_publish(self):
+        """Test encoding MQTT PUBLISH packets with QoS 0 and QoS 1."""
+        topic = "PROD/user/id123/uuid456/command"
+        payload = b'{"action":"BREW","apiVersion":2}'
+
+        # QoS 1 with packet_id
+        pkt_q1 = encode_mqtt_publish(topic, payload, packet_id=105, qos=1)
+        self.assertEqual(pkt_q1[0], 0x32)
+        decoded_q1 = decode_mqtt_publish_packet(pkt_q1)
+        self.assertIsNotNone(decoded_q1)
+        self.assertEqual(decoded_q1[0], topic)
+        self.assertEqual(decoded_q1[1], payload)
+        self.assertEqual(decoded_q1[2], 105)
+
+        # QoS 0
+        pkt_q0 = encode_mqtt_publish(topic, payload, qos=0)
+        self.assertEqual(pkt_q0[0], 0x30)
+        decoded_q0 = decode_mqtt_publish_packet(pkt_q0)
+        self.assertIsNotNone(decoded_q0)
+        self.assertEqual(decoded_q0[0], topic)
+        self.assertEqual(decoded_q0[1], payload)
+        self.assertIsNone(decoded_q0[2])
+
+    async def test_async_brew_and_cancel_commands(self):
+        """Test async_brew_coffee and async_cancel_brew payload generation and publishing."""
+        from unittest.mock import AsyncMock
+
+        coordinator = MagicMock()
+        client = MagicMock()
+        client.auth_session = MagicMock()
+        client.auth_session.user_id = "user_sub_uuid"
+        session = MagicMock()
+
+        listener = MorningIotListener(coordinator=coordinator, client=client, session=session)
+        listener._identity_id = "ap-southeast-1:test-identity"
+        listener.async_publish_command = AsyncMock()
+
+        recipe = MorningRecipe(
+            name="Morning Espresso",
+            temperature=94,
+            mass_output=40,
+            water_output=0,
+            bloom_duration=10,
+            stages=[
+                {"id": 0, "output": 0, "pressure": 3},
+                {"id": 1, "output": 5, "pressure": 7},
+                {"id": 2, "output": 35, "pressure": 5},
+            ],
+        )
+
+        await listener.async_brew_coffee("M_TEST_1", recipe)
+        listener.async_publish_command.assert_called_once()
+        cmd_payload = listener.async_publish_command.call_args[0][0]
+        self.assertEqual(cmd_payload["action"], "BREW")
+        self.assertEqual(cmd_payload["apiVersion"], 2)
+        self.assertEqual(cmd_payload["machineId"], "M_TEST_1")
+        self.assertEqual(cmd_payload["userId"], "ap-southeast-1:test-identity")
+        self.assertEqual(cmd_payload["appUserId"], "user_sub_uuid")
+        self.assertEqual(cmd_payload["data"]["type"], "COFFEE_RECIPE")
+        self.assertEqual(cmd_payload["data"]["recipe"]["name"], "Morning Espresso")
+        self.assertEqual(cmd_payload["data"]["recipe"]["temperature"], 94)
+        self.assertEqual(cmd_payload["data"]["recipe"]["massOutput"], 40)
+        coordinator.handle_live_brew_update.assert_called_once()
+        telem = coordinator.handle_live_brew_update.call_args[0][1]
+        self.assertEqual(telem.stage, "heating")
+        self.assertTrue(telem.is_brewing)
+
+        # Cancel brew
+        await listener.async_cancel_brew("M_TEST_1")
+        self.assertEqual(listener.async_publish_command.call_count, 2)
+        cancel_cmd = listener.async_publish_command.call_args[0][0]
+        self.assertEqual(cancel_cmd["action"], "CANCEL")
+        self.assertEqual(cancel_cmd["machineId"], "M_TEST_1")
+        self.assertIsNone(cancel_cmd["data"])
+        cancel_telem = coordinator.handle_live_brew_update.call_args[0][1]
+        self.assertEqual(cancel_telem.stage, "cancel")
+        self.assertFalse(cancel_telem.is_brewing)
 
 
 if __name__ == "__main__":

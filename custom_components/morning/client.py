@@ -17,7 +17,7 @@ from .const import (
     COGNITO_CLIENT_SECRET,
     COGNITO_ENDPOINT,
 )
-from .models import MorningAuthSession, MorningMachine
+from .models import MorningAuthSession, MorningMachine, MorningRecipe
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -337,3 +337,91 @@ class MorningClient:
         _LOGGER.debug("Checking updates for type=%s", machine_type)
         data = await self._request("GET", "machine/check-updates", params={"type": machine_type})
         return data if isinstance(data, dict) else {}
+
+    async def get_machine_recipes(self) -> list[MorningRecipe]:
+        """Fetch recipes currently stored in machine slots."""
+        _LOGGER.debug("Fetching machine slot recipes")
+        try:
+            data = await self._request("GET", "machine/recipes")
+            if isinstance(data, list):
+                return [MorningRecipe.from_api_json(item, source="machine") for item in data if isinstance(item, dict)]
+        except Exception as err:
+            _LOGGER.debug("Failed fetching machine recipes: %s", err)
+        return []
+
+    async def get_favorite_recipes(self, page_size: int = 50) -> list[MorningRecipe]:
+        """Fetch user favorite recipes from Morning Cloud."""
+        _LOGGER.debug("Fetching user favorite recipes")
+        try:
+            data = await self._request("GET", "user/recipe/favorites", params={"pageSize": page_size, "from": 0})
+            if isinstance(data, list):
+                favs = [MorningRecipe.from_api_json(item, source="favorite") for item in data if isinstance(item, dict)]
+                for f in favs:
+                    f.is_favorite = True
+                return favs
+        except Exception as err:
+            _LOGGER.debug("Failed fetching user favorite recipes: %s", err)
+        return []
+
+    async def get_recent_recipes(self, page_size: int = 20) -> list[MorningRecipe]:
+        """Fetch recently brewed recipes from Morning Cloud."""
+        _LOGGER.debug("Fetching recent recipes")
+        try:
+            data = await self._request("GET", "user/recipes/recent", params={"pageSize": page_size, "from": ""})
+            if isinstance(data, list):
+                return [MorningRecipe.from_api_json(item, source="recent") for item in data if isinstance(item, dict)]
+        except Exception as err:
+            _LOGGER.debug("Failed fetching recent recipes: %s", err)
+        return []
+
+    async def get_user_recipes(self, page_size: int = 50) -> list[MorningRecipe]:
+        """Fetch user-created recipes from Morning Cloud."""
+        _LOGGER.debug("Fetching user-created recipes")
+        try:
+            data = await self._request("GET", "user/recipe", params={"fields": "name", "pageSize": page_size, "from": 0})
+            if isinstance(data, list):
+                return [MorningRecipe.from_api_json(item, source="user") for item in data if isinstance(item, dict)]
+        except Exception as err:
+            _LOGGER.debug("Failed fetching user recipes: %s", err)
+        return []
+
+    async def search_recipes(self, query: str, page_size: int = 20) -> list[MorningRecipe]:
+        """Search Morning community and roaster recipes by text query."""
+        _LOGGER.debug("Searching recipes for query='%s'", query)
+        results: list[MorningRecipe] = []
+        seen_keys: set[str] = set()
+
+        # 1. Search public/community recipe catalogue
+        try:
+            data = await self._request("GET", "recipe/search", params={"text": query, "pageSize": page_size, "from": 0})
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        r = MorningRecipe.from_api_json(item, source="search")
+                        key = f"{r.name.lower()}::{r.roaster_name.lower()}::{r.temperature}::{r.mass_output}"
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            results.append(r)
+        except Exception as err:
+            _LOGGER.debug("Error searching recipe catalog: %s", err)
+
+        # 2. Search partner roaster profiles
+        try:
+            data = await self._request(
+                "GET",
+                "roaster/recipe",
+                params={"fields": "name", "pageSize": page_size, "from": 0, "search": query, "isPartner": "true"},
+            )
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        r = MorningRecipe.from_api_json(item, source="roaster")
+                        key = f"{r.name.lower()}::{r.roaster_name.lower()}::{r.temperature}::{r.mass_output}"
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            results.append(r)
+        except Exception as err:
+            _LOGGER.debug("Error searching partner roaster recipes: %s", err)
+
+        return results
+
