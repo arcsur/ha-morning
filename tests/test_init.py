@@ -93,12 +93,20 @@ class TestMorningInit(unittest.IsolatedAsyncioTestCase):
         self.hass.data = {}
 
         with patch("homeassistant.components.frontend.add_extra_js_url") as mock_add_js:
+            # If hass.http is None during early boot, do NOT mark registered
+            http_backup = self.hass.http
+            self.hass.http = None
+            await _async_register_frontend(self.hass)
+            self.assertFalse(self.hass.data.get("morning_frontend_registered", False))
+
+            # Once hass.http is ready, register static path and mark registered
+            self.hass.http = http_backup
             await _async_register_frontend(self.hass)
             self.assertTrue(self.hass.data.get("morning_frontend_registered"))
             self.hass.http.async_register_static_paths.assert_called_once()
-            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.4")
+            mock_add_js.assert_called_once_with(self.hass, "/morning-card/morning-coffee-card.js?v=1.4.5")
 
-            # Second call should be a no-op due to idempotency guard
+            # Subsequent call should be a no-op due to idempotency guard
             await _async_register_frontend(self.hass)
             self.assertEqual(self.hass.http.async_register_static_paths.call_count, 1)
 

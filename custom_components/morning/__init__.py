@@ -96,32 +96,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Register custom Lovelace card static path and inject script into frontend."""
-    if hass.data.setdefault("morning_frontend_registered", False):
-        return
-
+    import shutil
     from pathlib import Path
+
     card_path = Path(__file__).parent / "frontend" / "morning-coffee-card.js"
     if not card_path.exists():
         return
 
-    def _get_version() -> str:
+    def _prepare_frontend_assets() -> str:
+        # Also mirror card into <config>/www/morning-card/ so /local/morning-card/ is
+        # served by HA's core HTTP component before custom integrations finish booting.
+        if hasattr(hass, "config") and hasattr(hass.config, "path"):
+            try:
+                www_dir = Path(hass.config.path("www")) / "morning-card"
+                www_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(card_path, www_dir / "morning-coffee-card.js")
+            except Exception:
+                pass
+
         manifest_path = Path(__file__).parent / "manifest.json"
         if manifest_path.exists():
             import json
 
             try:
                 manifest = json.loads(manifest_path.read_text())
-                return str(manifest.get("version", "1.4.1"))
+                return str(manifest.get("version", "1.4.4"))
             except Exception:
                 pass
-        return "1.4.1"
+        return "1.4.4"
 
-    version = await hass.async_add_executor_job(_get_version)
+    version = await hass.async_add_executor_job(_prepare_frontend_assets)
+
+    if hass.data.get("morning_frontend_registered"):
+        return
 
     url = "/morning-card/morning-coffee-card.js"
     versioned_url = f"{url}?v={version}"
 
     # Register HTTP static route if HTTP component is active
+    static_registered = False
     if hasattr(hass, "http") and hass.http:
         try:
             if hasattr(hass.http, "async_register_static_paths"):
@@ -130,10 +143,15 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
                 await hass.http.async_register_static_paths(
                     [StaticPathConfig(url, str(card_path), cache_headers=False)]
                 )
+                static_registered = True
             elif hasattr(hass.http, "register_static_path"):
                 hass.http.register_static_path(url, str(card_path), cache_headers=False)
+                static_registered = True
         except Exception as err:
-            _LOGGER.debug("Could not register static path for morning-coffee-card: %s", err)
+            _LOGGER.warning("Could not register static path for morning-coffee-card: %s", err)
+
+    if not static_registered:
+        return
 
     # Inject extra JS URL into frontend with cache-busting version parameter
     try:

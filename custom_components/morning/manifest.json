@@ -3,10 +3,11 @@
   "name": "Morning Coffee Machine",
   "codeowners": ["@arcsur"],
   "config_flow": true,
+  "dependencies": ["http", "frontend"],
   "documentation": "https://github.com/arcsur/ha-morning",
   "integration_type": "device",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/arcsur/ha-morning/issues",
   "requirements": [],
-  "version": "1.4.4"
+  "version": "1.4.5"
 }

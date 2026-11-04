@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.4.4";
+const CARD_VERSION = "1.4.5";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
