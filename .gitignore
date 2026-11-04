@@ -61,4 +61,6 @@ config/
 # Cache & tools
 .codegraph/
 .ruff_cache/
+node_modules/
+.vitest/
 

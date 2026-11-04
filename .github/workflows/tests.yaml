@@ -7,8 +7,8 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: Run Unit Tests
+  test-python:
+    name: Python Unit Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -32,3 +32,22 @@ jobs:
       - name: Run Pytest
         run: |
           pytest tests/ -v
+
+  test-frontend:
+    name: Frontend Card Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run Frontend Tests
+        run: npm test

@@ -53,12 +53,24 @@
    - Always register static HTTP paths (`hass.http.async_register_static_paths`) and inject extra JS in component-level `async_setup(hass, config)` as well as at the very top of `async_setup_entry(hass, entry)` before any coordinator network calls (`async_config_entry_first_refresh`). Lovelace queries dashboard resources concurrently during early Home Assistant boot; registering static paths after network calls produces early 404s that poison browser ES module resolution.
    - Avoid blocking file I/O inside the asyncio event loop: wrap file reads (such as `manifest.json`) in `await hass.async_add_executor_job(...)`.
 
-### 4. Integration Release & Deployment Protocol
-- When modifying integration backend code or the Lovelace card:
+### 4. Testing & Development Workflow (Inner Loop)
+- **Frontend Card Automated Tests**:
+  - Run `npm test` (via Vitest + JSDOM) to verify entity resolution, stage progressions, sticky telemetry, and SVG extraction curves.
+  - Tests run in < 1 second against shared fixtures in `tests/fixtures/`.
+- **Backend Tests**:
+  - Run `.venv/bin/pytest` and `.venv/bin/ruff check`.
+- **Fast Visual Dev Harness**:
+  - Run `npm run harness` (or `python3 -m http.server 8080`) and open `http://localhost:8080/dev/harness/index.html` in browser.
+  - Test UI changes live with instant reload on file save (Cmd+R), scenario presets (`Heating`, `Blooming`, `Brewing`, `Cancel`, `Done`, `Purge`, `Water Low`, `Boot Race`), metric sliders, and real-time brew playback.
+  - **Do NOT bump versions, tag git, or invoke HACS during inner-loop development.**
+
+### 5. Integration Release & Deployment Protocol (Outer Loop)
+- When modifications are fully verified in tests and the dev harness:
   1. Bump version synchronously in `manifest.json`, `pyproject.toml`, and `morning-coffee-card.js`.
-  2. Update frontend asset version assertion in `tests/test_init.py` and verify `pytest` and `ruff` pass.
+  2. Update frontend asset version assertion in `tests/test_init.py` and verify `npm test`, `pytest`, and `ruff` pass.
   3. Commit and tag release (`git tag vX.Y.Z && git push origin main --tags`).
   4. Refresh HACS repository info (`ha_manage_hacs(action="update_information", repository_id="1425736971")`).
   5. Download updated version in HACS (`ha_manage_hacs(action="download", repository_id="1425736971", version="vX.Y.Z")`).
   6. Update dashboard resource URL (`ha_config_set_dashboard_resource(..., url="/morning-card/morning-coffee-card.js?v=X.Y.Z")`).
   7. Restart Home Assistant (`ha_restart`) to ensure updated backend code and static card assets load cleanly into memory.
+

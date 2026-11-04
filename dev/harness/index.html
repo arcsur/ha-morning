@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morning Coffee Card - Dev Playground & Visual Test Harness</title>
+  <style>
+    :root {
+      --primary-color: #03a9f4;
+      --card-background-color: #1c1c1e;
+      --primary-text-color: #ffffff;
+      --secondary-text-color: #8e8e93;
+      --divider-color: rgba(255, 255, 255, 0.12);
+      --ha-card-border-radius: 16px;
+      --ha-card-box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #121214;
+      color: #e0e0e0;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      display: flex;
+      gap: 24px;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+
+    #preview-pane {
+      flex: 1;
+      max-width: 520px;
+    }
+
+    #controls-pane {
+      flex: 1.2;
+      background: #1c1c1e;
+      border-radius: 16px;
+      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    h2, h3 {
+      margin: 0 0 8px 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    button {
+      background: #2c2c2e;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    button:hover {
+      background: #3a3a3c;
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    button.primary {
+      background: #e67e22;
+      border-color: #e67e22;
+      color: #fff;
+    }
+
+    button.primary:hover {
+      background: #d35400;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.85rem;
+    }
+
+    .control-row label {
+      flex: 1;
+      color: #a0a0a0;
+    }
+
+    .control-row input[type="range"] {
+      flex: 2;
+    }
+
+    .control-row span.val {
+      width: 48px;
+      text-align: right;
+      font-family: monospace;
+      font-size: 0.9rem;
+    }
+
+    .log-container {
+      background: #0d0d0f;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      height: 180px;
+      overflow-y: auto;
+      color: #38ef7d;
+    }
+
+    .log-item {
+      margin-bottom: 4px;
+      line-height: 1.4;
+    }
+
+    .log-time {
+      color: #7f8c8d;
+      margin-right: 6px;
+    }
+
+    .badge-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgba(230, 126, 34, 0.2);
+      color: #e67e22;
+      margin-left: 8px;
+    }
+  </style>
+
+  <!-- Load card as ES module -->
+  <script type="module" src="../../custom_components/morning/frontend/morning-coffee-card.js"></script>
+</head>
+<body>
+
+  <!-- Preview Container (Mimics Lovelace Card Environment) -->
+  <div id="preview-pane">
+    <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+      <h2 style="margin: 0;">Card Preview <span class="badge-pill">Hot-Reloadable</span></h2>
+      <span style="font-size: 0.75rem; color: #8e8e93;">Edit card JS & refresh</span>
+    </div>
+    <div id="card-anchor"></div>
+  </div>
+
+  <!-- Interactive Controls & Chaos Injector -->
+  <div id="controls-pane">
+    <div>
+      <h2>State Presets</h2>
+      <div class="btn-group">
+        <button id="btn-idle">Idle / Ready</button>
+        <button id="btn-heating" class="primary">Heating</button>
+        <button id="btn-blooming" class="primary">Blooming</button>
+        <button id="btn-brewing" class="primary">Brewing</button>
+        <button id="btn-done">Done (Sticky)</button>
+        <button id="btn-cancel">Cancel Mid-Brew</button>
+        <button id="btn-purge">Purge Cycle</button>
+        <button id="btn-water">Water Low</button>
+        <button id="btn-empty" style="color: #ff6b6b;">Early Boot (Empty)</button>
+      </div>
+    </div>
+
+    <div>
+      <h2>Live Brew Telemetry Playback</h2>
+      <div class="btn-group">
+        <button id="btn-play-1x" class="primary">Play Brew (1x)</button>
+        <button id="btn-play-5x" class="primary">Play Brew (5x Fast)</button>
+        <button id="btn-stop">Stop</button>
+      </div>
+      <div id="playback-status" style="font-size: 0.8rem; color: #8e8e93; margin-top: 6px;">Idle</div>
+    </div>
+
+    <div>
+      <h2>Manual Sliders</h2>
+      <div class="control-row">
+        <label for="sl-temp">Brew Temp (°C):</label>
+        <input type="range" id="sl-temp" min="60" max="100" value="93">
+        <span class="val" id="val-temp">93°C</span>
+      </div>
+      <div class="control-row">
+        <label for="sl-water">Water Dispensed (mL):</label>
+        <input type="range" id="sl-water" min="0" max="250" value="0">
+        <span class="val" id="val-water">0 mL</span>
+      </div>
+      <div class="control-row">
+        <label for="sl-mass">Mass Output (g):</label>
+        <input type="range" id="sl-mass" min="0" max="250" value="0">
+        <span class="val" id="val-mass">0 g</span>
+      </div>
+      <div class="control-row">
+        <label for="sl-tank">Water Tank (mL):</label>
+        <input type="range" id="sl-tank" min="0" max="850" value="511">
+        <span class="val" id="val-tank">511 mL</span>
+      </div>
+      <div class="control-row">
+        <label for="sl-bloom">Bloom Duration (s):</label>
+        <input type="range" id="sl-bloom" min="0" max="60" value="0">
+        <span class="val" id="val-bloom">0 s</span>
+      </div>
+    </div>
+
+    <div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <h3 style="margin: 0;">Event & Service Call Log</h3>
+        <button id="btn-clear-log" style="padding: 2px 8px; font-size: 0.75rem;">Clear</button>
+      </div>
+      <div class="log-container" id="log-box"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { MockHassManager } from "./mock-hass.js";
+
+    const anchor = document.getElementById("card-anchor");
+    const card = document.createElement("morning-coffee-card");
+    card.setConfig({
+      entity: "sensor.dagusmorning_status",
+      show_extraction_curve: true,
+      show_brew_section: true,
+    });
+    anchor.appendChild(card);
+
+    const logBox = document.getElementById("log-box");
+    function logEvent(entry) {
+      const line = document.createElement("div");
+      line.className = "log-item";
+      line.innerHTML = `<span class="log-time">[${entry.timestamp}]</span> <strong>${entry.name}</strong> ${JSON.stringify(entry.payload || {})}`;
+      logBox.prepend(line);
+    }
+
+    const manager = new MockHassManager(card, logEvent);
+    manager.setPreset("idle");
+
+    // Hook preset buttons
+    document.getElementById("btn-idle").addEventListener("click", () => manager.setPreset("idle"));
+    document.getElementById("btn-heating").addEventListener("click", () => manager.setPreset("heating"));
+    document.getElementById("btn-blooming").addEventListener("click", () => manager.setPreset("blooming"));
+    document.getElementById("btn-brewing").addEventListener("click", () => manager.setPreset("brewing"));
+    document.getElementById("btn-done").addEventListener("click", () => manager.setPreset("done"));
+    document.getElementById("btn-cancel").addEventListener("click", () => manager.setPreset("cancel"));
+    document.getElementById("btn-purge").addEventListener("click", () => manager.setPreset("purge"));
+    document.getElementById("btn-water").addEventListener("click", () => manager.setPreset("water_low"));
+    document.getElementById("btn-empty").addEventListener("click", () => manager.setPreset("empty_boot"));
+
+    // Hook playback
+    const statusText = document.getElementById("playback-status");
+    document.getElementById("btn-play-1x").addEventListener("click", () => {
+      manager.startPlayback(1.0, (p) => {
+        statusText.textContent = `Playing [${p.phase}]: T=${p.t}s, Water=${p.water.toFixed(1)}mL, Mass=${p.mass.toFixed(1)}g`;
+      });
+    });
+    document.getElementById("btn-play-5x").addEventListener("click", () => {
+      manager.startPlayback(5.0, (p) => {
+        statusText.textContent = `Playing [${p.phase} (5x)]: T=${p.t}s, Water=${p.water.toFixed(1)}mL, Mass=${p.mass.toFixed(1)}g`;
+      });
+    });
+    document.getElementById("btn-stop").addEventListener("click", () => {
+      manager.stopPlayback();
+      statusText.textContent = "Playback stopped";
+    });
+
+    // Hook sliders
+    const hookSlider = (id, key, unit) => {
+      const slider = document.getElementById(id);
+      const val = document.getElementById("val-" + key);
+      slider.addEventListener("input", (e) => {
+        val.textContent = `${e.target.value} ${unit}`;
+        manager.updateMetric(key, e.target.value);
+      });
+    };
+    hookSlider("sl-temp", "temp", "°C");
+    hookSlider("sl-water", "water", "mL");
+    hookSlider("sl-mass", "mass", "g");
+    hookSlider("sl-tank", "tank", "mL");
+    hookSlider("sl-bloom", "bloom", "s");
+
+    document.getElementById("btn-clear-log").addEventListener("click", () => {
+      logBox.innerHTML = "";
+    });
+  </script>
+</body>
+</html>
