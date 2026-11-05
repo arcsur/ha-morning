@@ -176,6 +176,31 @@ class TestMorningModels(unittest.TestCase):
         )
         self.assertTrue(expired_session.is_expired)
 
+    def test_recipe_bloom_and_bypass_properties(self):
+        """Test MorningRecipe bloom_enabled and bypass_enabled properties and serialization."""
+        from custom_components.morning.models import MorningRecipe
+
+        r_plain = MorningRecipe(name="Plain", bloom_duration=None, water_output=0)
+        self.assertFalse(r_plain.bloom_enabled)
+        self.assertFalse(r_plain.bypass_enabled)
+        d_plain = r_plain.to_dict()
+        self.assertFalse(d_plain["bloom_enabled"])
+        self.assertFalse(d_plain["bypass_enabled"])
+
+        r_bloom = MorningRecipe(name="Bloom", bloom_duration=10, water_output=0)
+        self.assertTrue(r_bloom.bloom_enabled)
+        self.assertFalse(r_bloom.bypass_enabled)
+        d_bloom = r_bloom.to_dict()
+        self.assertTrue(d_bloom["bloom_enabled"])
+        self.assertFalse(d_bloom["bypass_enabled"])
+
+        r_americano = MorningRecipe(name="Americano", bloom_duration=0, water_output=120)
+        self.assertFalse(r_americano.bloom_enabled)
+        self.assertTrue(r_americano.bypass_enabled)
+        d_americano = r_americano.to_dict()
+        self.assertFalse(d_americano["bloom_enabled"])
+        self.assertTrue(d_americano["bypass_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

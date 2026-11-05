@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.5.1";
+const CARD_VERSION = "1.6.0";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -67,6 +67,10 @@ class MorningCoffeeCard extends HTMLElement {
     this._searchResults = [];
     this._isSearching = false;
     this._confirmBrewProfile = null;
+    this._brewSectionDirty = true;
+    this._lastBrewingState = false;
+    this._savedDrawerScroll = 0;
+    this._savedProfileScroll = 0;
     this._setupClickListener();
   }
 
@@ -169,6 +173,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (el.id === "btn-toggle-drawer") {
           e.stopPropagation();
           this._brewDrawerOpen = !this._brewDrawerOpen;
+          this._brewSectionDirty = true;
           this._updateContent();
           return;
         }
@@ -178,6 +183,7 @@ class MorningCoffeeCard extends HTMLElement {
           if (this._confirmBrewProfile) {
             this._executeBrew(this._confirmBrewProfile);
             this._confirmBrewProfile = null;
+            this._brewSectionDirty = true;
             this._updateContent();
           }
           return;
@@ -187,6 +193,7 @@ class MorningCoffeeCard extends HTMLElement {
           e.stopPropagation();
           if (this._confirmBrewProfile) {
             this._loadProfileIntoStudio(this._confirmBrewProfile);
+            this._brewSectionDirty = true;
           }
           return;
         }
@@ -194,12 +201,14 @@ class MorningCoffeeCard extends HTMLElement {
         if (el.id === "btn-confirm-dismiss") {
           e.stopPropagation();
           this._confirmBrewProfile = null;
+          this._brewSectionDirty = true;
           this._updateContent();
           return;
         }
 
         if (el.id === "btn-submit-search") {
           e.stopPropagation();
+          this._brewSectionDirty = true;
           this._performSearch(this._searchQuery);
           return;
         }
@@ -220,6 +229,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (tab) {
           e.stopPropagation();
           this._activeBrewTab = tab;
+          this._brewSectionDirty = true;
           this._updateContent();
           return;
         }
@@ -228,6 +238,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (subtab) {
           e.stopPropagation();
           this._savedSubTab = subtab;
+          this._brewSectionDirty = true;
           this._updateContent();
           return;
         }
@@ -236,6 +247,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (preset) {
           e.stopPropagation();
           this._applyPreset(preset);
+          this._brewSectionDirty = true;
           return;
         }
 
@@ -244,6 +256,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (param && step) {
           e.stopPropagation();
           this._handleParamStep(param, parseFloat(step));
+          this._brewSectionDirty = true;
           return;
         }
 
@@ -251,6 +264,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (toggle) {
           e.stopPropagation();
           this._handleToggle(toggle);
+          this._brewSectionDirty = true;
           return;
         }
 
@@ -258,6 +272,7 @@ class MorningCoffeeCard extends HTMLElement {
         if (chipIndex !== null) {
           e.stopPropagation();
           this._handleQuickChipClick(parseInt(chipIndex, 10));
+          this._brewSectionDirty = true;
           return;
         }
 
@@ -271,6 +286,7 @@ class MorningCoffeeCard extends HTMLElement {
               profile = JSON.parse(decodeURIComponent(profileJson));
             } catch (_) {}
           }
+          this._brewSectionDirty = true;
           if (action === "brew-profile" && profile) {
             this._executeBrew(profile);
           } else if (action === "load-studio" && profile) {
@@ -287,6 +303,14 @@ class MorningCoffeeCard extends HTMLElement {
           this._openMoreInfo(entityId, el);
           return;
         }
+      }
+    });
+
+    this.shadowRoot.addEventListener("input", (e) => {
+      const slider = e.target.closest(".studio-range-slider");
+      if (slider) {
+        const param = slider.getAttribute("data-slider");
+        this._handleSliderChange(param, slider.value);
       }
     });
   }
@@ -1358,11 +1382,14 @@ class MorningCoffeeCard extends HTMLElement {
         }
         .studio-handle {
           cursor: pointer !important;
-          transition: r 0.15s ease;
+          transition: r 0.15s ease, filter 0.15s ease;
         }
         .studio-handle:hover, .studio-handle.active {
-          r: 9;
-          filter: drop-shadow(0 0 6px var(--primary-color, #e67e22));
+          r: 5;
+          filter: drop-shadow(0 0 5px var(--primary-color, #e67e22));
+        }
+        .studio-handle-hit {
+          cursor: pointer !important;
         }
         .studio-floating-tooltip {
           position: absolute;
@@ -1377,6 +1404,110 @@ class MorningCoffeeCard extends HTMLElement {
           font-weight: 600;
           pointer-events: none;
           display: none;
+        }
+
+        /* Studio Range Sliders Grid */
+        .studio-sliders-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .slider-control-group {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 8px;
+          padding: 8px 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .slider-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .slider-title {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 0.72rem;
+          color: var(--secondary-text-color, #aaa);
+          font-weight: 600;
+        }
+        .slider-title ha-icon {
+          --mdc-icon-size: 15px;
+          color: var(--primary-color, #e67e22);
+        }
+        .slider-val-badge {
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #fff;
+          font-variant-numeric: tabular-nums;
+        }
+        .studio-range-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 6px;
+          border-radius: 3px;
+          background: rgba(255, 255, 255, 0.12);
+          outline: none;
+          cursor: pointer !important;
+          transition: background 0.2s;
+        }
+        .studio-range-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background: var(--primary-color, #e67e22);
+          border: 2px solid #fff;
+          cursor: pointer !important;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+          transition: transform 0.15s ease;
+        }
+        .studio-range-slider::-webkit-slider-thumb:hover,
+        .studio-range-slider::-webkit-slider-thumb:active {
+          transform: scale(1.18);
+        }
+        .studio-range-slider::-moz-range-thumb {
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background: var(--primary-color, #e67e22);
+          border: 2px solid #fff;
+          cursor: pointer !important;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Stage Color Pills Below SVG */
+        .studio-stages-pills {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px;
+          margin-top: 6px;
+        }
+        .stage-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 0.68rem;
+          padding: 2px 8px;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: #ccc;
+        }
+        .stage-pill strong {
+          color: #fff;
+        }
+        .stage-pill-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          display: inline-block;
         }
         .studio-params-row {
           display: grid;
@@ -1608,11 +1739,13 @@ class MorningCoffeeCard extends HTMLElement {
     if (!query || !query.trim()) {
       this._searchResults = [];
       this._isSearching = false;
+      this._brewSectionDirty = true;
       this._updateContent();
       return;
     }
     this._searchQuery = query.trim();
     this._isSearching = true;
+    this._brewSectionDirty = true;
     this._updateContent();
 
     try {
@@ -1657,6 +1790,7 @@ class MorningCoffeeCard extends HTMLElement {
       );
     } finally {
       this._isSearching = false;
+      this._brewSectionDirty = true;
       this._updateContent();
     }
   }
@@ -1689,27 +1823,59 @@ class MorningCoffeeCard extends HTMLElement {
     this._activeBrewTab = "studio";
     this._brewDrawerOpen = true;
     this._confirmBrewProfile = null;
+    this._brewSectionDirty = true;
     this._updateContent();
   }
 
   _applyPreset(key) {
     this._activePresetKey = key;
-    if (key === "short") {
+    if (key === "classic") {
+      this._draftCurve.name = "Classic Espresso";
+      this._draftCurve.temperature = 95;
+      this._draftCurve.mass_output = 40;
+      this._draftCurve.water_output = 0;
+      this._draftCurve.bloom_duration = 0;
+      this._draftCurve.bloom_enabled = false;
+      this._draftCurve.bypass_enabled = false;
+      this._draftCurve.stages = [
+        { id: 0, output: 0, pressure: 3 },
+        { id: 1, output: 5, pressure: 7 },
+        { id: 2, output: 35, pressure: 5 },
+      ];
+    } else if (key === "short") {
       this._draftCurve.name = "Short (Ristretto)";
       this._draftCurve.temperature = 93;
       this._draftCurve.mass_output = 25;
+      this._draftCurve.water_output = 0;
+      this._draftCurve.bloom_duration = 0;
       this._draftCurve.bloom_enabled = false;
+      this._draftCurve.bypass_enabled = false;
       this._draftCurve.stages = [
         { id: 0, output: 0, pressure: 3 },
         { id: 1, output: 4, pressure: 7 },
         { id: 2, output: 20, pressure: 5 },
       ];
+    } else if (key === "bloom") {
+      this._draftCurve.name = "Bloom & Brew";
+      this._draftCurve.temperature = 93;
+      this._draftCurve.mass_output = 35;
+      this._draftCurve.water_output = 0;
+      this._draftCurve.bloom_duration = 10;
+      this._draftCurve.bloom_enabled = true;
+      this._draftCurve.bypass_enabled = false;
+      this._draftCurve.stages = [
+        { id: 0, output: 0, pressure: 2 },
+        { id: 1, output: 5, pressure: 6 },
+        { id: 2, output: 30, pressure: 6 },
+      ];
     } else if (key === "slow") {
       this._draftCurve.name = "Slow & Steady";
       this._draftCurve.temperature = 94;
       this._draftCurve.mass_output = 40;
-      this._draftCurve.bloom_enabled = true;
+      this._draftCurve.water_output = 0;
       this._draftCurve.bloom_duration = 10;
+      this._draftCurve.bloom_enabled = true;
+      this._draftCurve.bypass_enabled = false;
       this._draftCurve.stages = [
         { id: 0, output: 0, pressure: 2 },
         { id: 1, output: 10, pressure: 5 },
@@ -1719,13 +1885,30 @@ class MorningCoffeeCard extends HTMLElement {
       this._draftCurve.name = "Fast Shot";
       this._draftCurve.temperature = 95;
       this._draftCurve.mass_output = 35;
+      this._draftCurve.water_output = 0;
+      this._draftCurve.bloom_duration = 0;
       this._draftCurve.bloom_enabled = false;
+      this._draftCurve.bypass_enabled = false;
       this._draftCurve.stages = [
         { id: 0, output: 0, pressure: 7 },
         { id: 1, output: 15, pressure: 7 },
         { id: 2, output: 28, pressure: 4 },
       ];
+    } else if (key === "americano") {
+      this._draftCurve.name = "Americano";
+      this._draftCurve.temperature = 94;
+      this._draftCurve.mass_output = 35;
+      this._draftCurve.water_output = 120;
+      this._draftCurve.bloom_duration = 0;
+      this._draftCurve.bloom_enabled = false;
+      this._draftCurve.bypass_enabled = true;
+      this._draftCurve.stages = [
+        { id: 0, output: 0, pressure: 3 },
+        { id: 1, output: 5, pressure: 7 },
+        { id: 2, output: 30, pressure: 5 },
+      ];
     }
+    this._brewSectionDirty = true;
     this._updateContent();
   }
 
@@ -1745,11 +1928,76 @@ class MorningCoffeeCard extends HTMLElement {
     } else if (param === "temp") {
       const cur = this._draftCurve.temperature || 94;
       this._draftCurve.temperature = Math.max(65, Math.min(99, cur + delta));
-    } else if (param === "bloom_sec") {
-      const cur = this._draftCurve.bloom_duration || 10;
-      this._draftCurve.bloom_duration = Math.max(1, Math.min(60, cur + delta));
+    } else if (param === "bloom_sec" || param === "bloom") {
+      const cur = this._draftCurve.bloom_duration || 0;
+      this._draftCurve.bloom_duration = Math.max(0, Math.min(30, cur + delta));
+      this._draftCurve.bloom_enabled = this._draftCurve.bloom_duration > 0;
+    } else if (param === "water" || param === "bypass") {
+      const cur = this._draftCurve.water_output || 0;
+      this._draftCurve.water_output = Math.max(0, Math.min(250, cur + delta));
+      this._draftCurve.bypass_enabled = this._draftCurve.water_output > 0;
     }
     this._activePresetKey = "custom";
+    this._brewSectionDirty = true;
+    this._updateContent();
+  }
+
+  _handleSliderChange(param, value) {
+    const val = Number(value);
+    const draft = this._draftCurve;
+    if (param === "mass") {
+      const next = Math.max(10, Math.min(250, val));
+      draft.mass_output = next;
+      if (draft.stages && draft.stages.length >= 3) {
+        if (draft.stages[2].output >= next) {
+          draft.stages[2].output = Math.max(4, next - 4);
+        }
+        if (draft.stages[1].output >= draft.stages[2].output) {
+          draft.stages[1].output = Math.max(2, draft.stages[2].output - 2);
+        }
+      }
+    } else if (param === "temp") {
+      draft.temperature = Math.max(65, Math.min(99, val));
+    } else if (param === "bloom") {
+      draft.bloom_duration = Math.max(0, Math.min(30, val));
+      draft.bloom_enabled = draft.bloom_duration > 0;
+    } else if (param === "bypass") {
+      draft.water_output = Math.max(0, Math.min(250, val));
+      draft.bypass_enabled = draft.water_output > 0;
+    }
+    this._activePresetKey = "custom";
+
+    // In-place update to preserve slider pointer capture during live drag
+    const brewSec = this.shadowRoot.querySelector("#sec-brew");
+    if (brewSec) {
+      const badge = brewSec.querySelector(`.slider-val-badge[data-badge="${param}"]`);
+      if (badge) {
+        if (param === "mass") badge.textContent = `${draft.mass_output} g`;
+        else if (param === "temp") badge.textContent = `${draft.temperature} °C`;
+        else if (param === "bloom") badge.textContent = draft.bloom_duration ? `${draft.bloom_duration} s` : "Off (0s)";
+        else if (param === "bypass") badge.textContent = draft.water_output ? `${draft.water_output} mL` : "None (0mL)";
+      }
+      const brewBtnSpan = brewSec.querySelector("#btn-studio-brew span");
+      if (brewBtnSpan) {
+        brewBtnSpan.textContent = `Brew Now (${draft.mass_output || 40}g @ ${draft.temperature || 94}°C${draft.water_output ? ` + ${draft.water_output}mL water` : ""})`;
+      }
+      const presetBtns = brewSec.querySelectorAll(".preset-btn");
+      presetBtns.forEach((btn) => btn.classList.toggle("active", btn.getAttribute("data-preset") === "custom"));
+
+      const svgBox = brewSec.querySelector(".studio-svg-box");
+      if (svgBox) {
+        const tempContainer = document.createElement("div");
+        tempContainer.innerHTML = this._generateStudioSvg(draft);
+        const newSvgBox = tempContainer.firstElementChild;
+        if (newSvgBox) {
+          svgBox.replaceWith(newSvgBox);
+          this._setupStudioInteraction(newSvgBox);
+        }
+      }
+      return;
+    }
+
+    this._brewSectionDirty = true;
     this._updateContent();
   }
 
@@ -1763,6 +2011,7 @@ class MorningCoffeeCard extends HTMLElement {
       this._draftCurve.bypass_enabled = !this._draftCurve.bypass_enabled;
     }
     this._activePresetKey = "custom";
+    this._brewSectionDirty = true;
     this._updateContent();
   }
 
@@ -1772,18 +2021,20 @@ class MorningCoffeeCard extends HTMLElement {
     const profile = quickList[index];
     if (!profile) return;
     this._confirmBrewProfile = profile;
+    this._brewSectionDirty = true;
     this._updateContent();
   }
 
   _getQuickProfiles(catalog) {
-    if (catalog?.quick && Array.isArray(catalog.quick) && catalog.quick.length > 0) {
-      return catalog.quick;
+    const quick = catalog?.quick_profiles || catalog?.quick;
+    if (quick && Array.isArray(quick) && quick.length > 0) {
+      return quick;
     }
     const combined = [
-      ...(catalog?.favorites || []),
-      ...(catalog?.recents || []),
-      ...(catalog?.custom || []),
-      ...(catalog?.machine || []),
+      ...(catalog?.favorite_profiles || catalog?.favorites || []),
+      ...(catalog?.recent_profiles || catalog?.recents || []),
+      ...(catalog?.machine_profiles || catalog?.machine || []),
+      ...(catalog?.custom_profiles || catalog?.custom || []),
     ];
     if (combined.length > 0) {
       return combined.slice(0, 6);
@@ -1880,11 +2131,14 @@ class MorningCoffeeCard extends HTMLElement {
 
   _renderConfirmBar() {
     if (!this._confirmBrewProfile) return "";
+    const p = this._confirmBrewProfile;
+    const bypassStr = p.water_output > 0 ? ` + ${p.water_output}mL water` : "";
+    const bloomStr = p.bloom_duration > 0 ? ` • ${p.bloom_duration}s bloom` : "";
     return `
       <div class="confirm-bar">
         <div class="confirm-info">
           <ha-icon icon="mdi:coffee-outline" style="color: var(--primary-color, #e67e22);"></ha-icon>
-          <span>Brew <strong>${this._escapeHtml(this._confirmBrewProfile.name)}</strong> (${this._confirmBrewProfile.temperature}°C, ${this._confirmBrewProfile.mass_output}g)?</span>
+          <span>Brew <strong>${this._escapeHtml(p.name)}</strong> (${p.temperature}°C, ${p.mass_output}g${bypassStr}${bloomStr})?</span>
         </div>
         <div class="confirm-actions">
           <button class="btn-confirm-brew" id="btn-confirm-brew-now">
@@ -1939,23 +2193,28 @@ class MorningCoffeeCard extends HTMLElement {
 
   _renderSavedTab(catalog) {
     const subtab = this._savedSubTab || "favorites";
+    const favorites = catalog?.favorite_profiles || catalog?.favorites || [];
+    const recents = catalog?.recent_profiles || catalog?.recents || [];
+    const custom = catalog?.custom_profiles || catalog?.custom || [];
+    const machine = catalog?.machine_profiles || catalog?.machine || [];
+
     let profiles = [];
     if (subtab === "favorites") {
-      profiles = catalog?.favorites || [];
+      profiles = favorites;
     } else if (subtab === "recents") {
-      profiles = catalog?.recents || [];
+      profiles = recents;
     } else if (subtab === "custom") {
-      profiles = catalog?.custom || [];
+      profiles = custom;
     } else if (subtab === "machine") {
-      profiles = catalog?.machine || [];
+      profiles = machine;
     }
 
     return `
       <div class="saved-subtabs">
-        <button class="subtab-btn${subtab === "favorites" ? " active" : ""}" data-subtab="favorites">Favorites (${(catalog?.favorites || []).length})</button>
-        <button class="subtab-btn${subtab === "recents" ? " active" : ""}" data-subtab="recents">Recent (${(catalog?.recents || []).length})</button>
-        <button class="subtab-btn${subtab === "custom" ? " active" : ""}" data-subtab="custom">Custom (${(catalog?.custom || []).length})</button>
-        <button class="subtab-btn${subtab === "machine" ? " active" : ""}" data-subtab="machine">Machine Presets</button>
+        <button class="subtab-btn${subtab === "favorites" ? " active" : ""}" data-subtab="favorites">Favorites (${favorites.length})</button>
+        <button class="subtab-btn${subtab === "recents" ? " active" : ""}" data-subtab="recents">Recent (${recents.length})</button>
+        <button class="subtab-btn${subtab === "custom" ? " active" : ""}" data-subtab="custom">Custom (${custom.length})</button>
+        <button class="subtab-btn${subtab === "machine" ? " active" : ""}" data-subtab="machine">Machine Presets (${machine.length})</button>
       </div>
       ${this._renderProfileList(profiles, subtab !== "custom")}
     `;
@@ -1994,61 +2253,88 @@ class MorningCoffeeCard extends HTMLElement {
 
     return `
       <div class="studio-container">
-        <!-- Presets Row -->
+        <!-- Presets Row Matching Drink Morning Reference App -->
         <div class="presets-row">
           <span style="font-size: 0.72rem; color: #888; font-weight: 600; margin-right: 4px;">PRESETS:</span>
+          <button class="preset-btn${preset === "classic" ? " active" : ""}" data-preset="classic">Classic (40g)</button>
           <button class="preset-btn${preset === "short" ? " active" : ""}" data-preset="short">Short (25g)</button>
+          <button class="preset-btn${preset === "bloom" ? " active" : ""}" data-preset="bloom">Bloom & Brew (35g)</button>
           <button class="preset-btn${preset === "slow" ? " active" : ""}" data-preset="slow">Slow & Steady (40g)</button>
           <button class="preset-btn${preset === "fast" ? " active" : ""}" data-preset="fast">Fast Shot (35g)</button>
+          <button class="preset-btn${preset === "americano" ? " active" : ""}" data-preset="americano">Americano (35g+120mL)</button>
           <button class="preset-btn${preset === "custom" ? " active" : ""}" data-preset="custom">Custom</button>
         </div>
 
-        <!-- Interactive SVG Area -->
+        <!-- Interactive SVG Area with 50% smaller handles, stage colors & bloom/bypass -->
         ${this._generateStudioSvg(draft)}
 
-        <!-- Numerical Steppers -->
-        <div class="studio-params-row">
-          <div class="stepper-box">
-            <div class="stepper-label">
-              <span class="stepper-label-title">Yield Output</span>
-              <span class="stepper-label-val">${draft.mass_output || 40}<span style="font-size: 0.75rem; color: #888; font-weight: 500; margin-left: 2px;">g</span></span>
+        <!-- Sliders with MDI Icons for Yield, Temp, Bloom & Water Bypass -->
+        <div class="studio-sliders-grid">
+          <!-- Brew Yield Slider -->
+          <div class="slider-control-group">
+            <div class="slider-header">
+              <div class="slider-title">
+                <ha-icon icon="mdi:scale"></ha-icon>
+                <span>Yield Output</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button class="step-ctrl-btn" data-param="mass" data-step="-5">-5</button>
+                <button class="step-ctrl-btn" data-param="mass" data-step="-1">-</button>
+                <span class="slider-val-badge" data-badge="mass">${draft.mass_output || 40} g</span>
+                <button class="step-ctrl-btn" data-param="mass" data-step="1">+</button>
+                <button class="step-ctrl-btn" data-param="mass" data-step="5">+5</button>
+              </div>
             </div>
-            <div class="stepper-controls">
-              <button class="step-ctrl-btn" data-param="mass" data-step="-5">-5</button>
-              <button class="step-ctrl-btn" data-param="mass" data-step="-1">-</button>
-              <button class="step-ctrl-btn" data-param="mass" data-step="1">+</button>
-              <button class="step-ctrl-btn" data-param="mass" data-step="5">+5</button>
-            </div>
+            <input type="range" class="studio-range-slider" min="15" max="150" step="1" value="${draft.mass_output || 40}" data-slider="mass" />
           </div>
 
-          <div class="stepper-box">
-            <div class="stepper-label">
-              <span class="stepper-label-title">Brew Temp</span>
-              <span class="stepper-label-val">${draft.temperature || 94}<span style="font-size: 0.75rem; color: #888; font-weight: 500; margin-left: 2px;">°C</span></span>
+          <!-- Brew Temp Slider -->
+          <div class="slider-control-group">
+            <div class="slider-header">
+              <div class="slider-title">
+                <ha-icon icon="mdi:thermometer"></ha-icon>
+                <span>Brew Temp</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button class="step-ctrl-btn" data-param="temp" data-step="-1">-</button>
+                <span class="slider-val-badge" data-badge="temp">${draft.temperature || 94} °C</span>
+                <button class="step-ctrl-btn" data-param="temp" data-step="1">+</button>
+              </div>
             </div>
-            <div class="stepper-controls">
-              <button class="step-ctrl-btn" data-param="temp" data-step="-1">-</button>
-              <button class="step-ctrl-btn" data-param="temp" data-step="1">+</button>
-            </div>
+            <input type="range" class="studio-range-slider" min="65" max="99" step="1" value="${draft.temperature || 94}" data-slider="temp" />
           </div>
-        </div>
 
-        <!-- Advanced Bloom & Bypass Pills -->
-        <div class="advanced-pills-row">
-          <button class="adv-pill${draft.bloom_enabled ? " active" : ""}" data-toggle="bloom">
-            <ha-icon icon="mdi:water-boiler"></ha-icon>
-            <span>Bloom: ${draft.bloom_enabled ? `${draft.bloom_duration || 10}s` : "Off"}</span>
-          </button>
-          ${draft.bloom_enabled ? `
-            <div style="display: inline-flex; align-items: center; gap: 4px;">
-              <button class="step-ctrl-btn" data-param="bloom_sec" data-step="-2" style="width: 22px; height: 22px; font-size: 0.75rem;">-</button>
-              <button class="step-ctrl-btn" data-param="bloom_sec" data-step="2" style="width: 22px; height: 22px; font-size: 0.75rem;">+</button>
+          <!-- Bloom Time Slider -->
+          <div class="slider-control-group">
+            <div class="slider-header">
+              <div class="slider-title">
+                <ha-icon icon="mdi:timer-sand"></ha-icon>
+                <span>Bloom Time</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button class="step-ctrl-btn" data-param="bloom_sec" data-step="-2">-2</button>
+                <span class="slider-val-badge" data-badge="bloom">${draft.bloom_duration ? `${draft.bloom_duration} s` : "Off (0s)"}</span>
+                <button class="step-ctrl-btn" data-param="bloom_sec" data-step="2">+2</button>
+              </div>
             </div>
-          ` : ""}
-          <button class="adv-pill${draft.bypass_enabled ? " active" : ""}" data-toggle="bypass">
-            <ha-icon icon="mdi:call-split"></ha-icon>
-            <span>Bypass: ${draft.bypass_enabled ? "On" : "Off"}</span>
-          </button>
+            <input type="range" class="studio-range-slider" min="0" max="30" step="1" value="${draft.bloom_duration || 0}" data-slider="bloom" />
+          </div>
+
+          <!-- Water Bypass Slider (Americano) -->
+          <div class="slider-control-group">
+            <div class="slider-header">
+              <div class="slider-title">
+                <ha-icon icon="mdi:water-plus"></ha-icon>
+                <span>Water Bypass</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button class="step-ctrl-btn" data-param="water" data-step="-10">-10</button>
+                <span class="slider-val-badge" data-badge="bypass" style="color: #3498db;">${draft.water_output ? `${draft.water_output} mL` : "None (0mL)"}</span>
+                <button class="step-ctrl-btn" data-param="water" data-step="10">+10</button>
+              </div>
+            </div>
+            <input type="range" class="studio-range-slider" min="0" max="250" step="5" value="${draft.water_output || 0}" data-slider="bypass" />
+          </div>
         </div>
 
         <!-- Footer Actions -->
@@ -2059,7 +2345,7 @@ class MorningCoffeeCard extends HTMLElement {
           </button>
           <button class="btn-brew-primary" id="btn-studio-brew">
             <ha-icon icon="mdi:coffee-maker"></ha-icon>
-            <span>Brew Now (${draft.mass_output || 40}g @ ${draft.temperature || 94}°C)</span>
+            <span>Brew Now (${draft.mass_output || 40}g @ ${draft.temperature || 94}°C${draft.water_output ? ` + ${draft.water_output}mL water` : ""})</span>
           </button>
         </div>
       </div>
@@ -2080,7 +2366,12 @@ class MorningCoffeeCard extends HTMLElement {
   _renderProfileCard(profile, showRoaster = true) {
     const jsonStr = encodeURIComponent(JSON.stringify(profile));
     const isFav = !!profile.is_favorite;
-    const bloomText = profile.bloom_enabled ? ` • Bloom ${profile.bloom_duration || 10}s` : "";
+    const bloomText = (profile.bloom_duration && profile.bloom_duration > 0) || profile.bloom_enabled
+      ? ` • Bloom ${profile.bloom_duration || 10}s`
+      : "";
+    const bypassText = (profile.water_output && profile.water_output > 0) || profile.bypass_enabled
+      ? ` • +${profile.water_output}mL water`
+      : "";
 
     return `
       <div class="profile-card">
@@ -2095,7 +2386,8 @@ class MorningCoffeeCard extends HTMLElement {
             <span class="highlight">${profile.temperature || 94}°C</span>
             <span>•</span>
             <span>${profile.mass_output || 40}g yield</span>
-            <span>${bloomText}</span>
+            ${bloomText ? `<span>${bloomText}</span>` : ""}
+            ${bypassText ? `<span style="color: #3498db; font-weight: 600;">${bypassText}</span>` : ""}
           </div>
         </div>
         ${this._renderSparklineSvg(profile.stages, profile.mass_output)}
@@ -2136,13 +2428,14 @@ class MorningCoffeeCard extends HTMLElement {
     const xEnd = 67;
     const yEnd = y2;
 
-    const linePath = `M ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)}`;
     const areaPath = `M ${x0} 21 L ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 21 Z`;
 
     return `
       <svg class="profile-sparkline" viewBox="0 0 70 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="${areaPath}" fill="rgba(230, 126, 34, 0.18)" />
-        <path d="${linePath}" fill="none" stroke="#e67e22" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="${areaPath}" fill="rgba(230, 126, 34, 0.15)" />
+        <line x1="${x0}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="#1abc9c" stroke-width="1.8" stroke-linecap="round" />
+        <line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#e67e22" stroke-width="1.8" stroke-linecap="round" />
+        <line x1="${x2.toFixed(1)}" y1="${y2.toFixed(1)}" x2="${xEnd}" y2="${yEnd.toFixed(1)}" stroke="#e74c3c" stroke-width="1.8" stroke-linecap="round" />
       </svg>
     `;
   }
@@ -2165,8 +2458,10 @@ class MorningCoffeeCard extends HTMLElement {
     const xEnd = 390;
     const yEnd = y2;
 
-    const linePath = `M ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)}`;
-    const areaPath = `M ${x0} 130 L ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
+    const hasBloom = draft.bloom_duration && draft.bloom_duration > 0;
+    const hasBypass = draft.water_output && draft.water_output > 0;
+
+    const areaPath = `M ${x0} 130 L ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
 
     const pressureLevels = [1, 2, 3, 4, 5, 6, 7];
 
@@ -2176,10 +2471,26 @@ class MorningCoffeeCard extends HTMLElement {
         <svg class="studio-svg" viewBox="0 0 420 160" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <linearGradient id="studioCurveGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#e67e22" stop-opacity="0.35" />
+              <stop offset="0%" stop-color="#e67e22" stop-opacity="0.28" />
               <stop offset="100%" stop-color="#e67e22" stop-opacity="0.0" />
             </linearGradient>
+            <linearGradient id="bloomZoneGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#f39c12" stop-opacity="0.25" />
+              <stop offset="100%" stop-color="#f39c12" stop-opacity="0.04" />
+            </linearGradient>
           </defs>
+
+          <!-- Stage Background Columns -->
+          <rect class="stage-bg-col0" x="${x0}" y="20" width="${Math.max(0, x1 - x0).toFixed(1)}" height="110" fill="rgba(26, 188, 156, 0.05)" />
+          <rect class="stage-bg-col1" x="${x1.toFixed(1)}" y="20" width="${Math.max(0, x2 - x1).toFixed(1)}" height="110" fill="rgba(230, 126, 34, 0.05)" />
+          <rect class="stage-bg-col2" x="${x2.toFixed(1)}" y="20" width="${Math.max(0, xEnd - x2).toFixed(1)}" height="110" fill="rgba(231, 76, 60, 0.05)" />
+
+          <!-- Optional Bloom Column Marker -->
+          ${hasBloom ? `
+            <rect class="bloom-marker-rect" x="${(x1 - 8).toFixed(1)}" y="20" width="16" height="110" fill="url(#bloomZoneGrad)" />
+            <line class="bloom-marker-line" x1="${x1.toFixed(1)}" y1="20" x2="${x1.toFixed(1)}" y2="130" stroke="#f39c12" stroke-width="1.5" stroke-dasharray="3 3" />
+            <text class="bloom-marker-text" x="${x1.toFixed(1)}" y="16" fill="#f39c12" font-size="8" font-weight="bold" text-anchor="middle" font-family="sans-serif">⏳ ${draft.bloom_duration}s Bloom</text>
+          ` : ""}
 
           <!-- Grid Lines & Pressure Labels -->
           ${pressureLevels.map((p) => {
@@ -2200,14 +2511,60 @@ class MorningCoffeeCard extends HTMLElement {
           <!-- Curve Area Fill -->
           <path class="studio-curve-area" d="${areaPath}" fill="url(#studioCurveGrad)" />
 
-          <!-- Curve Path Line -->
-          <path class="studio-curve-line" d="${linePath}" fill="none" stroke="#e67e22" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+          <!-- Segment 0: Pre-Infusion Line (Teal) -->
+          <line class="studio-curve-seg0 stage-seg" data-seg="0" x1="${x0}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="#1abc9c" stroke-width="2.5" stroke-linecap="round" />
 
-          <!-- Draggable Handles -->
-          <circle class="studio-handle" data-handle="0" cx="${x0}" cy="${y0.toFixed(1)}" r="7" fill="#fff" stroke="#e67e22" stroke-width="2.5" />
-          <circle class="studio-handle" data-handle="1" cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="7" fill="#fff" stroke="#e67e22" stroke-width="2.5" />
-          <circle class="studio-handle" data-handle="2" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="7" fill="#fff" stroke="#e67e22" stroke-width="2.5" />
+          <!-- Segment 1: Infusion Line (Amber) -->
+          <line class="studio-curve-seg1 stage-seg" data-seg="1" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#e67e22" stroke-width="2.5" stroke-linecap="round" />
+
+          <!-- Segment 2: Post-Infusion Line (Coral) -->
+          <line class="studio-curve-seg2 stage-seg" data-seg="2" x1="${x2.toFixed(1)}" y1="${y2.toFixed(1)}" x2="${xEnd}" y2="${yEnd.toFixed(1)}" stroke="#e74c3c" stroke-width="2.5" stroke-linecap="round" />
+
+          <!-- Optional Bypass Water Flow Tail (Blue) -->
+          ${hasBypass ? `
+            <line class="stage-seg-bypass" x1="390" y1="${yEnd.toFixed(1)}" x2="414" y2="${yEnd.toFixed(1)}" stroke="#3498db" stroke-width="3" stroke-dasharray="2 3" stroke-linecap="round" />
+            <circle cx="414" cy="${yEnd.toFixed(1)}" r="3" fill="#3498db" />
+            <text x="402" y="145" fill="#3498db" font-size="7.5" font-weight="bold" text-anchor="middle" font-family="sans-serif">+${draft.water_output}mL</text>
+          ` : ""}
+
+          <!-- Draggable Handles: 50% smaller visual radius (r=3.5) + invisible touch target (r=14) -->
+          <circle class="studio-handle" data-handle="0" cx="${x0}" cy="${y0.toFixed(1)}" r="3.5" fill="#fff" stroke="#1abc9c" stroke-width="1.8" />
+          <circle class="studio-handle-hit" data-handle="0" cx="${x0}" cy="${y0.toFixed(1)}" r="14" fill="transparent" pointer-events="all" />
+
+          <circle class="studio-handle" data-handle="1" cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="3.5" fill="#fff" stroke="#e67e22" stroke-width="1.8" />
+          <circle class="studio-handle-hit" data-handle="1" cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="14" fill="transparent" pointer-events="all" />
+
+          <circle class="studio-handle" data-handle="2" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3.5" fill="#fff" stroke="#e74c3c" stroke-width="1.8" />
+          <circle class="studio-handle-hit" data-handle="2" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="14" fill="transparent" pointer-events="all" />
         </svg>
+
+        <!-- Stage Information Pills -->
+        <div class="studio-stages-pills">
+          <span class="stage-pill" data-pill="0">
+            <span class="stage-pill-dot" style="background: #1abc9c;"></span>
+            <strong>Pre-Infusion:</strong> <span class="pill-val">0g @ ${s0.pressure}b</span>
+          </span>
+          ${hasBloom ? `
+            <span class="stage-pill" data-pill="bloom" style="border-color: rgba(243, 156, 18, 0.4); color: #f39c12;">
+              <span class="stage-pill-dot" style="background: #f39c12;"></span>
+              <strong>Bloom:</strong> ${draft.bloom_duration}s
+            </span>
+          ` : ""}
+          <span class="stage-pill" data-pill="1">
+            <span class="stage-pill-dot" style="background: #e67e22;"></span>
+            <strong>Infusion:</strong> <span class="pill-val">${s1.output}g @ ${s1.pressure}b</span>
+          </span>
+          <span class="stage-pill" data-pill="2">
+            <span class="stage-pill-dot" style="background: #e74c3c;"></span>
+            <strong>Post-Infusion:</strong> <span class="pill-val">${s2.output}g @ ${s2.pressure}b</span>
+          </span>
+          ${hasBypass ? `
+            <span class="stage-pill" data-pill="bypass" style="border-color: rgba(52, 152, 219, 0.4); color: #3498db;">
+              <span class="stage-pill-dot" style="background: #3498db;"></span>
+              <strong>Bypass:</strong> +${draft.water_output}mL
+            </span>
+          ` : ""}
+        </div>
       </div>
     `;
   }
@@ -2243,39 +2600,89 @@ class MorningCoffeeCard extends HTMLElement {
       const xEnd = 390;
       const yEnd = y2;
 
-      const lineEl = svg.querySelector(".studio-curve-line");
+      const seg0 = svg.querySelector(".studio-curve-seg0");
+      const seg1 = svg.querySelector(".studio-curve-seg1");
+      const seg2 = svg.querySelector(".studio-curve-seg2");
       const areaEl = svg.querySelector(".studio-curve-area");
 
-      const linePath = `M ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)}`;
-      const areaPath = `M ${x0} 130 L ${x0} ${y0} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
-
-      if (lineEl) lineEl.setAttribute("d", linePath);
-      if (areaEl) areaEl.setAttribute("d", areaPath);
-
-      const h0 = svg.querySelector('.studio-handle[data-handle="0"]');
-      const h1 = svg.querySelector('.studio-handle[data-handle="1"]');
-      const h2 = svg.querySelector('.studio-handle[data-handle="2"]');
-
-      if (h0) {
-        h0.setAttribute("cx", String(x0));
-        h0.setAttribute("cy", y0.toFixed(1));
+      if (seg0) {
+        seg0.setAttribute("x1", String(x0));
+        seg0.setAttribute("y1", y0.toFixed(1));
+        seg0.setAttribute("x2", x1.toFixed(1));
+        seg0.setAttribute("y2", y1.toFixed(1));
       }
-      if (h1) {
-        h1.setAttribute("cx", x1.toFixed(1));
-        h1.setAttribute("cy", y1.toFixed(1));
+      if (seg1) {
+        seg1.setAttribute("x1", x1.toFixed(1));
+        seg1.setAttribute("y1", y1.toFixed(1));
+        seg1.setAttribute("x2", x2.toFixed(1));
+        seg1.setAttribute("y2", y2.toFixed(1));
       }
-      if (h2) {
-        h2.setAttribute("cx", x2.toFixed(1));
-        h2.setAttribute("cy", y2.toFixed(1));
+      if (seg2) {
+        seg2.setAttribute("x1", x2.toFixed(1));
+        seg2.setAttribute("y1", y2.toFixed(1));
+        seg2.setAttribute("x2", String(xEnd));
+        seg2.setAttribute("y2", yEnd.toFixed(1));
       }
+      if (areaEl) {
+        const areaPath = `M ${x0} 130 L ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
+        areaEl.setAttribute("d", areaPath);
+      }
+
+      // Update background column widths
+      const bg0 = svg.querySelector(".stage-bg-col0");
+      const bg1 = svg.querySelector(".stage-bg-col1");
+      const bg2 = svg.querySelector(".stage-bg-col2");
+      if (bg0) bg0.setAttribute("width", Math.max(0, x1 - x0).toFixed(1));
+      if (bg1) {
+        bg1.setAttribute("x", x1.toFixed(1));
+        bg1.setAttribute("width", Math.max(0, x2 - x1).toFixed(1));
+      }
+      if (bg2) {
+        bg2.setAttribute("x", x2.toFixed(1));
+        bg2.setAttribute("width", Math.max(0, xEnd - x2).toFixed(1));
+      }
+
+      // Update bloom marker if present
+      const bRect = svg.querySelector(".bloom-marker-rect");
+      const bLine = svg.querySelector(".bloom-marker-line");
+      const bText = svg.querySelector(".bloom-marker-text");
+      if (bRect) bRect.setAttribute("x", (x1 - 8).toFixed(1));
+      if (bLine) {
+        bLine.setAttribute("x1", x1.toFixed(1));
+        bLine.setAttribute("x2", x1.toFixed(1));
+      }
+      if (bText) bText.setAttribute("x", x1.toFixed(1));
+
+      [0, 1, 2].forEach((idx) => {
+        const cx = idx === 0 ? x0 : idx === 1 ? x1 : x2;
+        const cy = idx === 0 ? y0 : idx === 1 ? y1 : y2;
+        const h = svg.querySelector(`.studio-handle[data-handle="${idx}"]`);
+        const hit = svg.querySelector(`.studio-handle-hit[data-handle="${idx}"]`);
+        if (h) {
+          h.setAttribute("cx", typeof cx === "number" ? cx.toFixed(1) : String(cx));
+          h.setAttribute("cy", cy.toFixed(1));
+        }
+        if (hit) {
+          hit.setAttribute("cx", typeof cx === "number" ? cx.toFixed(1) : String(cx));
+          hit.setAttribute("cy", cy.toFixed(1));
+        }
+      });
+
+      // Update stage pill text values
+      const pill0 = box.querySelector('.stage-pill[data-pill="0"] .pill-val');
+      if (pill0) pill0.textContent = `0g @ ${s0.pressure}b`;
+      const pill1 = box.querySelector('.stage-pill[data-pill="1"] .pill-val');
+      if (pill1) pill1.textContent = `${s1.output}g @ ${s1.pressure}b`;
+      const pill2 = box.querySelector('.stage-pill[data-pill="2"] .pill-val');
+      if (pill2) pill2.textContent = `${s2.output}g @ ${s2.pressure}b`;
     };
 
     const onPointerDown = (e) => {
-      const handleEl = e.target.closest(".studio-handle");
+      const handleEl = e.target.closest(".studio-handle, .studio-handle-hit");
       if (!handleEl) return;
-      activeHandle = handleEl;
       activeIdx = parseInt(handleEl.getAttribute("data-handle"), 10);
-      handleEl.classList.add("active");
+      activeHandle = svg.querySelector(`.studio-handle[data-handle="${activeIdx}"]`) || handleEl;
+      activeHandle.classList.add("active");
       try {
         if (typeof handleEl.setPointerCapture === "function") {
           handleEl.setPointerCapture(e.pointerId);
@@ -2300,7 +2707,7 @@ class MorningCoffeeCard extends HTMLElement {
       if (activeIdx === 0) {
         draft.stages[0].pressure = pClamped;
         if (tooltip) {
-          tooltip.textContent = `Stage 0: 0g @ ${pClamped} bar`;
+          tooltip.textContent = `Pre-Infusion: 0g @ ${pClamped} bar`;
           tooltip.style.display = "block";
         }
       } else if (activeIdx === 1) {
@@ -2308,7 +2715,7 @@ class MorningCoffeeCard extends HTMLElement {
         draft.stages[1].output = wClamped;
         draft.stages[1].pressure = pClamped;
         if (tooltip) {
-          tooltip.textContent = `Stage 1: ${wClamped}g @ ${pClamped} bar`;
+          tooltip.textContent = `Infusion: ${wClamped}g @ ${pClamped} bar`;
           tooltip.style.display = "block";
         }
       } else if (activeIdx === 2) {
@@ -2316,7 +2723,7 @@ class MorningCoffeeCard extends HTMLElement {
         draft.stages[2].output = wClamped;
         draft.stages[2].pressure = pClamped;
         if (tooltip) {
-          tooltip.textContent = `Stage 2: ${wClamped}g @ ${pClamped} bar`;
+          tooltip.textContent = `Post-Infusion: ${wClamped}g @ ${pClamped} bar`;
           tooltip.style.display = "block";
         }
       }
@@ -2500,12 +2907,11 @@ class MorningCoffeeCard extends HTMLElement {
     const brewBloomEnt = this._resolvedEntities.brew_bloom;
     const waterLevelEnt = this._resolvedEntities.water_level;
 
-    let html = "";
-
+    let headerHtml = "";
     // 1. Header & Title Section
     const showHeader = this._config.show_header !== false && this._config.show_title !== false;
     if (showHeader) {
-      html += `
+      headerHtml = `
         <div class="header">
           <div class="brand">
             <div class="brand-icon">
@@ -2529,6 +2935,7 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     // 2. Brewing / Extraction Progress Monitor
+    let heroHtml = "";
     const showBrewSection = this._config.show_brew_section !== false;
     const showExtractionCurve = this._config.show_extraction_curve !== false;
 
@@ -2651,7 +3058,7 @@ class MorningCoffeeCard extends HTMLElement {
           </div>
         `;
 
-      html += `
+      heroHtml = `
         <div class="${heroClass}">
           ${stepperHtml}
 
@@ -2702,19 +3109,21 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     // 2.5 Brew Initiation & Controls Section
+    let brewControlsHtml = "";
     const showBrewControls = this._config.show_brew_controls !== false;
     if (showBrewControls) {
       const catalog = statusState.attributes?.recipe_catalog || {};
       const machineId = statusState.attributes?.machine_id || "";
-      html += this._renderBrewSection(catalog, isBrewing, machineId);
+      brewControlsHtml = this._renderBrewSection(catalog, isBrewing, machineId);
     }
 
     // 3. Water Reservoir Section
+    let reservoirHtml = "";
     const showWaterGauge = this._config.show_water_gauge !== false;
     if (showWaterGauge) {
       const isLow = waterLevelPct <= 15;
       const barClass = isLow ? "progress-bar low" : "progress-bar";
-      html += `
+      reservoirHtml = `
         <div class="reservoir-section">
           <div class="reservoir-header">
             <div class="reservoir-title">
@@ -2746,6 +3155,7 @@ class MorningCoffeeCard extends HTMLElement {
     }
 
     // 4. Selectable Diagnostics Bar
+    let diagHtml = "";
     const showDiagnostics = this._config.show_diagnostics !== false;
     const activeStats = Array.isArray(this._config.status_items)
       ? this._config.status_items
@@ -2758,31 +3168,103 @@ class MorningCoffeeCard extends HTMLElement {
         .join("");
 
       if (itemsHtml.trim().length > 0) {
-        html += `<div class="diag-grid">${itemsHtml}</div>`;
+        diagHtml = `<div class="diag-grid">${itemsHtml}</div>`;
       }
     }
 
-    root.innerHTML = html;
+    // Capture and preserve scroll positions
+    const existingDrawer = root.querySelector(".drawer-body");
+    const savedDrawerScroll = existingDrawer ? existingDrawer.scrollTop : (this._savedDrawerScroll || 0);
+    const existingList = root.querySelector(".profile-list");
+    const savedProfileScroll = existingList ? existingList.scrollTop : (this._savedProfileScroll || 0);
+    this._savedDrawerScroll = savedDrawerScroll;
+    this._savedProfileScroll = savedProfileScroll;
 
-    if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "studio") {
-      const studioSvgBox = root.querySelector(".studio-svg-box");
-      if (studioSvgBox) {
-        this._setupStudioInteraction(studioSvgBox);
+    const existingBrewSection = root.querySelector("#sec-brew");
+    const isBrewingChanged = this._lastBrewingState !== isBrewing;
+
+    if (!existingBrewSection) {
+      root.innerHTML = `
+        <div id="sec-header">${headerHtml}</div>
+        <div id="sec-hero">${heroHtml}</div>
+        <div id="sec-brew">${brewControlsHtml}</div>
+        <div id="sec-reservoir">${reservoirHtml}</div>
+        <div id="sec-diag">${diagHtml}</div>
+      `;
+      this._brewSectionDirty = false;
+      this._lastBrewingState = isBrewing;
+
+      if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "studio") {
+        const studioSvgBox = root.querySelector(".studio-svg-box");
+        if (studioSvgBox) {
+          this._setupStudioInteraction(studioSvgBox);
+        }
       }
-    }
 
-    if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "search") {
-      const searchInput = root.querySelector("#search-input");
-      if (searchInput) {
-        searchInput.addEventListener("input", (e) => {
-          this._searchQuery = e.target.value;
-        });
-        searchInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            this._performSearch(this._searchQuery);
+      if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "search") {
+        const searchInput = root.querySelector("#search-input");
+        if (searchInput) {
+          searchInput.addEventListener("input", (e) => {
+            this._searchQuery = e.target.value;
+          });
+          searchInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              this._performSearch(this._searchQuery);
+            }
+          });
+        }
+      }
+    } else {
+      const secHeader = root.querySelector("#sec-header");
+      if (secHeader && secHeader.innerHTML !== headerHtml) secHeader.innerHTML = headerHtml;
+
+      const secHero = root.querySelector("#sec-hero");
+      if (secHero) secHero.innerHTML = heroHtml;
+
+      const secReservoir = root.querySelector("#sec-reservoir");
+      if (secReservoir && secReservoir.innerHTML !== reservoirHtml) secReservoir.innerHTML = reservoirHtml;
+
+      const secDiag = root.querySelector("#sec-diag");
+      if (secDiag && secDiag.innerHTML !== diagHtml) secDiag.innerHTML = diagHtml;
+
+      // Update brew section if dirty or brewing state toggled
+      if (this._brewSectionDirty || isBrewingChanged) {
+        existingBrewSection.innerHTML = brewControlsHtml;
+        this._brewSectionDirty = false;
+        this._lastBrewingState = isBrewing;
+
+        if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "studio") {
+          const studioSvgBox = existingBrewSection.querySelector(".studio-svg-box");
+          if (studioSvgBox) {
+            this._setupStudioInteraction(studioSvgBox);
           }
-        });
+        }
+
+        if (showBrewControls && this._brewDrawerOpen && this._activeBrewTab === "search") {
+          const searchInput = existingBrewSection.querySelector("#search-input");
+          if (searchInput) {
+            searchInput.addEventListener("input", (e) => {
+              this._searchQuery = e.target.value;
+            });
+            searchInput.addEventListener("keydown", (e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                this._performSearch(this._searchQuery);
+              }
+            });
+          }
+        }
+
+        // Restore scroll positions seamlessly
+        if (savedDrawerScroll) {
+          const newDrawer = existingBrewSection.querySelector(".drawer-body");
+          if (newDrawer) newDrawer.scrollTop = savedDrawerScroll;
+        }
+        if (savedProfileScroll) {
+          const newList = existingBrewSection.querySelector(".profile-list");
+          if (newList) newList.scrollTop = savedProfileScroll;
+        }
       }
     }
 

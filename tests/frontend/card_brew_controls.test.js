@@ -302,6 +302,132 @@ describe("MorningCoffeeCard Brew Initiation & Controls", () => {
     });
   });
 
+  it("renders range sliders with MDI icons for yield, temp, bloom, and water bypass", () => {
+    const drawerBtn = card.shadowRoot.querySelector("#btn-toggle-drawer");
+    drawerBtn.click();
+    const studioTab = card.shadowRoot.querySelector('.tab-btn[data-tab="studio"]');
+    studioTab.click();
+
+    // Verify all 4 sliders exist with correct data-slider attributes
+    const massSlider = card.shadowRoot.querySelector('.studio-range-slider[data-slider="mass"]');
+    const tempSlider = card.shadowRoot.querySelector('.studio-range-slider[data-slider="temp"]');
+    const bloomSlider = card.shadowRoot.querySelector('.studio-range-slider[data-slider="bloom"]');
+    const bypassSlider = card.shadowRoot.querySelector('.studio-range-slider[data-slider="bypass"]');
+
+    expect(massSlider).not.toBeNull();
+    expect(tempSlider).not.toBeNull();
+    expect(bloomSlider).not.toBeNull();
+    expect(bypassSlider).not.toBeNull();
+
+    // Verify MDI icons are rendered for each slider
+    expect(card.shadowRoot.querySelector('ha-icon[icon="mdi:scale"]')).not.toBeNull();
+    expect(card.shadowRoot.querySelector('ha-icon[icon="mdi:thermometer"]')).not.toBeNull();
+    expect(card.shadowRoot.querySelector('ha-icon[icon="mdi:timer-sand"]')).not.toBeNull();
+    expect(card.shadowRoot.querySelector('ha-icon[icon="mdi:water-plus"]')).not.toBeNull();
+
+    // Test sliding bloom time to 15s
+    bloomSlider.value = "15";
+    bloomSlider.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(card._draftCurve.bloom_duration).toBe(15);
+    expect(card._draftCurve.bloom_enabled).toBe(true);
+
+    const bloomBadge = card.shadowRoot.querySelector('.slider-val-badge[data-badge="bloom"]');
+    expect(bloomBadge.textContent).toContain("15 s");
+
+    // Test sliding water bypass to 120mL (Americano)
+    bypassSlider.value = "120";
+    bypassSlider.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(card._draftCurve.water_output).toBe(120);
+    expect(card._draftCurve.bypass_enabled).toBe(true);
+
+    const bypassBadge = card.shadowRoot.querySelector('.slider-val-badge[data-badge="bypass"]');
+    expect(bypassBadge.textContent).toContain("120 mL");
+  });
+
+  it("verifies 50% smaller handle radius and stage color coding in SVG curve", () => {
+    const drawerBtn = card.shadowRoot.querySelector("#btn-toggle-drawer");
+    drawerBtn.click();
+    const studioTab = card.shadowRoot.querySelector('.tab-btn[data-tab="studio"]');
+    studioTab.click();
+
+    // Check handle radius is 3.5 (50% smaller than original 7)
+    const handles = card.shadowRoot.querySelectorAll(".studio-handle");
+    expect(handles.length).toBe(3);
+    handles.forEach((h) => {
+      expect(h.getAttribute("r")).toBe("3.5");
+    });
+
+    // Check hit targets exist for easy touch/mouse grab
+    const hitTargets = card.shadowRoot.querySelectorAll(".studio-handle-hit");
+    expect(hitTargets.length).toBe(3);
+    hitTargets.forEach((hit) => {
+      expect(hit.getAttribute("r")).toBe("14");
+    });
+
+    // Check 3 stage paths with distinct colors
+    const seg0 = card.shadowRoot.querySelector('.stage-seg[data-seg="0"]');
+    const seg1 = card.shadowRoot.querySelector('.stage-seg[data-seg="1"]');
+    const seg2 = card.shadowRoot.querySelector('.stage-seg[data-seg="2"]');
+
+    expect(seg0.getAttribute("stroke")).toBe("#1abc9c"); // Pre-Infusion
+    expect(seg1.getAttribute("stroke")).toBe("#e67e22"); // Infusion
+    expect(seg2.getAttribute("stroke")).toBe("#e74c3c"); // Post-Infusion
+
+    // Check stage pills beneath SVG
+    expect(card.shadowRoot.querySelector('.stage-pill[data-pill="0"]').textContent).toContain("Pre-Infusion");
+    expect(card.shadowRoot.querySelector('.stage-pill[data-pill="1"]').textContent).toContain("Infusion");
+    expect(card.shadowRoot.querySelector('.stage-pill[data-pill="2"]').textContent).toContain("Post-Infusion");
+  });
+
+  it("selects Americano preset with coffee yield and bypass water", () => {
+    const drawerBtn = card.shadowRoot.querySelector("#btn-toggle-drawer");
+    drawerBtn.click();
+    const studioTab = card.shadowRoot.querySelector('.tab-btn[data-tab="studio"]');
+    studioTab.click();
+
+    const americanoBtn = card.shadowRoot.querySelector('.preset-btn[data-preset="americano"]');
+    expect(americanoBtn).not.toBeNull();
+    americanoBtn.click();
+
+    expect(card._draftCurve.name).toBe("Americano");
+    expect(card._draftCurve.mass_output).toBe(35);
+    expect(card._draftCurve.water_output).toBe(120);
+    expect(card._draftCurve.bypass_enabled).toBe(true);
+
+    // Bypass water tail appears in SVG with #3498db
+    const bypassTail = card.shadowRoot.querySelector(".stage-seg-bypass");
+    expect(bypassTail).not.toBeNull();
+    expect(bypassTail.getAttribute("stroke")).toBe("#3498db");
+
+    // Brew Now button reflects coffee yield + bypass water
+    const brewBtn = card.shadowRoot.querySelector("#btn-studio-brew");
+    expect(brewBtn.textContent).toContain("35g @ 94°C + 120mL water");
+  });
+
+  it("telemetry updates while drawer is open do not rebuild #sec-brew or jump scroll", () => {
+    const drawerBtn = card.shadowRoot.querySelector("#btn-toggle-drawer");
+    drawerBtn.click();
+
+    const brewSectionBefore = card.shadowRoot.querySelector("#sec-brew");
+    expect(brewSectionBefore).not.toBeNull();
+
+    // Simulate 1Hz telemetry update arriving from Hass
+    const updatedStates = JSON.parse(JSON.stringify(idleStates));
+    updatedStates["sensor.dagusmorning_status"].attributes.live_telemetry = {
+      brew_stage: "idle",
+      water_ml: 12,
+    };
+    card.hass = {
+      states: updatedStates,
+      callService: vi.fn(),
+    };
+
+    const brewSectionAfter = card.shadowRoot.querySelector("#sec-brew");
+    // #sec-brew element identity preserved (no innerHTML blowup of section container)
+    expect(brewSectionAfter).toBe(brewSectionBefore);
+    expect(card.shadowRoot.querySelector(".brew-drawer")).not.toBeNull();
+  });
+
   it("enforces Lovelace UX Invariant: no HTML title tooltips anywhere on the card", () => {
     const elementsWithTitle = card.shadowRoot.querySelectorAll("[title]");
     expect(elementsWithTitle.length).toBe(0);

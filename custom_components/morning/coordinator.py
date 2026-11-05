@@ -872,6 +872,100 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
         if not machine_list and self.user_recipes:
             machine_list = [r.to_dict() for r in self.user_recipes[:10]]
 
+        if not machine_list:
+            machine_list = [
+                {
+                    "id": -201,
+                    "name": "Classic Espresso",
+                    "roaster_name": "Morning Machine",
+                    "temperature": 95,
+                    "mass_output": 40,
+                    "water_output": 0,
+                    "bloom_duration": 0,
+                    "bloom_enabled": False,
+                    "bypass_enabled": False,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 5, "pressure": 7},
+                        {"id": 2, "output": 35, "pressure": 5},
+                    ],
+                    "is_favorite": True,
+                    "source": "machine",
+                },
+                {
+                    "id": -202,
+                    "name": "Bloom & Brew",
+                    "roaster_name": "Morning Machine",
+                    "temperature": 93,
+                    "mass_output": 35,
+                    "water_output": 0,
+                    "bloom_duration": 10,
+                    "bloom_enabled": True,
+                    "bypass_enabled": False,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 2},
+                        {"id": 1, "output": 5, "pressure": 6},
+                        {"id": 2, "output": 30, "pressure": 6},
+                    ],
+                    "is_favorite": True,
+                    "source": "machine",
+                },
+                {
+                    "id": -203,
+                    "name": "Short Dark",
+                    "roaster_name": "Morning Machine",
+                    "temperature": 92,
+                    "mass_output": 25,
+                    "water_output": 0,
+                    "bloom_duration": 0,
+                    "bloom_enabled": False,
+                    "bypass_enabled": False,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 5, "pressure": 7},
+                        {"id": 2, "output": 20, "pressure": 5},
+                    ],
+                    "is_favorite": False,
+                    "source": "machine",
+                },
+                {
+                    "id": -204,
+                    "name": "Slow & Steady",
+                    "roaster_name": "Morning Machine",
+                    "temperature": 93,
+                    "mass_output": 40,
+                    "water_output": 0,
+                    "bloom_duration": 5,
+                    "bloom_enabled": True,
+                    "bypass_enabled": False,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 10, "pressure": 7},
+                        {"id": 2, "output": 38, "pressure": 5},
+                    ],
+                    "is_favorite": False,
+                    "source": "machine",
+                },
+                {
+                    "id": -205,
+                    "name": "Americano",
+                    "roaster_name": "Morning Machine",
+                    "temperature": 94,
+                    "mass_output": 35,
+                    "water_output": 120,
+                    "bloom_duration": 0,
+                    "bloom_enabled": False,
+                    "bypass_enabled": True,
+                    "stages": [
+                        {"id": 0, "output": 0, "pressure": 3},
+                        {"id": 1, "output": 5, "pressure": 7},
+                        {"id": 2, "output": 30, "pressure": 5},
+                    ],
+                    "is_favorite": False,
+                    "source": "machine",
+                },
+            ]
+
         quick_list: list[dict[str, Any]] = []
         quick_keys: set[str] = set()
 
@@ -939,12 +1033,24 @@ class MorningDataUpdateCoordinator(DataUpdateCoordinator[dict[str, MorningMachin
                 },
             ]
 
+        if not fav_list:
+            fav_list = [p for p in quick_list if p.get("is_favorite")] or list(quick_list[:2])
+
+        if not recent_list:
+            recent_list = list(quick_list)
+
         return {
             "quick_profiles": quick_list,
             "favorite_profiles": fav_list,
             "recent_profiles": recent_list,
             "machine_profiles": machine_list,
             "custom_profiles": custom_list,
+            # Sibling aliases for frontend compatibility
+            "quick": quick_list,
+            "favorites": fav_list,
+            "recents": recent_list,
+            "machine": machine_list,
+            "custom": custom_list,
         }
 
     async def async_record_recent_brew(self, recipe: MorningRecipe) -> None:

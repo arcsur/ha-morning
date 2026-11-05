@@ -305,6 +305,16 @@ class MorningRecipe:
     is_favorite: bool = False
     source: str = "user"  # machine, favorite, recent, user, roaster, local
 
+    @property
+    def bloom_enabled(self) -> bool:
+        """Return True if recipe has a positive bloom duration."""
+        return self.bloom_duration is not None and self.bloom_duration > 0
+
+    @property
+    def bypass_enabled(self) -> bool:
+        """Return True if recipe has bypass water output."""
+        return self.water_output > 0
+
     def to_iot_recipe_dict(self) -> dict[str, Any]:
         """Convert to the exact recipe object expected by Morning IoT MQTT."""
         return {
@@ -359,6 +369,8 @@ class MorningRecipe:
             "mass_output": self.mass_output,
             "water_output": self.water_output,
             "bloom_duration": self.bloom_duration,
+            "bloom_enabled": self.bloom_enabled,
+            "bypass_enabled": self.bypass_enabled,
             "stages": [
                 {
                     "id": s.get("id", i),

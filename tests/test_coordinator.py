@@ -790,6 +790,35 @@ class TestMorningCoordinator(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(telem.is_brewing)
         self.assertEqual(self.coordinator.get_estimated_water_level("M_123"), 850.0)
 
+    def test_recipe_catalog_dual_keys_and_defaults(self):
+        """Test that get_recipe_catalog returns dual key aliases and non-empty defaults."""
+        catalog = self.coordinator.get_recipe_catalog("M_123")
+
+        # Verify dual keys exist and point to non-empty lists
+        self.assertIn("favorite_profiles", catalog)
+        self.assertIn("favorites", catalog)
+        self.assertEqual(catalog["favorite_profiles"], catalog["favorites"])
+
+        self.assertIn("recent_profiles", catalog)
+        self.assertIn("recents", catalog)
+        self.assertEqual(catalog["recent_profiles"], catalog["recents"])
+
+        self.assertIn("machine_profiles", catalog)
+        self.assertIn("machine", catalog)
+        self.assertEqual(catalog["machine_profiles"], catalog["machine"])
+        self.assertGreater(len(catalog["machine"]), 0)
+
+        self.assertIn("quick_profiles", catalog)
+        self.assertIn("quick", catalog)
+        self.assertEqual(catalog["quick_profiles"], catalog["quick"])
+        self.assertGreater(len(catalog["quick"]), 0)
+
+        # Verify machine recipes include Americano and Bloom & Brew
+        names = [p["name"] for p in catalog["machine"]]
+        self.assertIn("Classic Espresso", names)
+        self.assertIn("Bloom & Brew", names)
+        self.assertIn("Americano", names)
+
 
 if __name__ == "__main__":
     unittest.main()
