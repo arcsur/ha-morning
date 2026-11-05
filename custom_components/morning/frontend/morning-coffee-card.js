@@ -3,7 +3,7 @@
  * Custom card displaying machine diagnostics, water level, and live brewing telemetry.
  */
 
-const CARD_VERSION = "1.6.0";
+const CARD_VERSION = "1.6.1";
 
 const STAGE_ORDER = ["heating", "blooming", "brewing", "done"];
 
@@ -257,6 +257,16 @@ class MorningCoffeeCard extends HTMLElement {
           e.stopPropagation();
           this._handleParamStep(param, parseFloat(step));
           this._brewSectionDirty = true;
+          return;
+        }
+
+        const quickParam = el.getAttribute("data-param");
+        const quickVal = el.getAttribute("data-val");
+        if (quickParam && quickVal !== null) {
+          e.stopPropagation();
+          this._handleSliderChange(quickParam, parseFloat(quickVal));
+          const slider = this.shadowRoot.querySelector(`.studio-range-slider[data-slider="${quickParam}"]`);
+          if (slider) slider.value = quickVal;
           return;
         }
 
@@ -1594,6 +1604,145 @@ class MorningCoffeeCard extends HTMLElement {
           color: #3498db;
           font-weight: 600;
         }
+
+        /* Dedicated Interactive Stations (Bloom & Cup Composition) */
+        .studio-station-card {
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          padding: 10px 12px;
+          margin-top: 10px;
+        }
+        .station-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 6px;
+        }
+        .station-title {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.82rem;
+          font-weight: 600;
+          color: #eee;
+        }
+        .station-title ha-icon {
+          --mdc-icon-size: 18px;
+        }
+        .station-toggle-btn {
+          font-size: 0.68rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          padding: 3px 8px;
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          color: #888;
+          cursor: pointer !important;
+          transition: all 0.2s ease;
+        }
+        .station-toggle-btn * {
+          cursor: pointer !important;
+        }
+        .station-toggle-btn.bloom-active {
+          background: rgba(243, 156, 18, 0.2);
+          border-color: #f39c12;
+          color: #f39c12;
+        }
+        .station-toggle-btn.bypass-active {
+          background: rgba(52, 152, 219, 0.2);
+          border-color: #3498db;
+          color: #3498db;
+        }
+        .station-desc {
+          font-size: 0.7rem;
+          color: var(--secondary-text-color, #888);
+          margin-bottom: 8px;
+          line-height: 1.3;
+        }
+        .station-chips-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          margin-bottom: 8px;
+        }
+        .quick-preset-chip {
+          font-size: 0.7rem;
+          padding: 3px 9px;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: #bbb;
+          cursor: pointer !important;
+          transition: all 0.15s ease;
+        }
+        .quick-preset-chip * {
+          cursor: pointer !important;
+        }
+        .quick-preset-chip:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #fff;
+        }
+        .quick-preset-chip.active.bloom-chip {
+          background: rgba(243, 156, 18, 0.25);
+          border-color: #f39c12;
+          color: #f39c12;
+          font-weight: 600;
+        }
+        .quick-preset-chip.active.bypass-chip {
+          background: rgba(52, 152, 219, 0.25);
+          border-color: #3498db;
+          color: #3498db;
+          font-weight: 600;
+        }
+        .station-slider-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        /* Visual Cup Composition Meter */
+        .cup-composition-meter {
+          height: 22px;
+          border-radius: 6px;
+          overflow: hidden;
+          display: flex;
+          margin: 6px 0;
+          font-size: 0.68rem;
+          font-weight: 600;
+          line-height: 22px;
+          background: rgba(0, 0, 0, 0.2);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .cup-bar-coffee {
+          background: linear-gradient(90deg, #5d4037, #795548);
+          color: #ffe0b2;
+          text-align: center;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          transition: width 0.15s ease;
+          padding: 0 4px;
+        }
+        .cup-bar-water {
+          background: linear-gradient(90deg, #1976d2, #2196f3);
+          color: #e3f2fd;
+          text-align: center;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          transition: width 0.15s ease;
+          padding: 0 4px;
+        }
+        .cup-stats-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 0.68rem;
+          color: var(--secondary-text-color, #888);
+          margin-bottom: 8px;
+        }
         .studio-actions-footer {
           display: flex;
           align-items: center;
@@ -1958,10 +2107,10 @@ class MorningCoffeeCard extends HTMLElement {
       }
     } else if (param === "temp") {
       draft.temperature = Math.max(65, Math.min(99, val));
-    } else if (param === "bloom") {
+    } else if (param === "bloom" || param === "bloom_sec") {
       draft.bloom_duration = Math.max(0, Math.min(30, val));
       draft.bloom_enabled = draft.bloom_duration > 0;
-    } else if (param === "bypass") {
+    } else if (param === "bypass" || param === "water") {
       draft.water_output = Math.max(0, Math.min(250, val));
       draft.bypass_enabled = draft.water_output > 0;
     }
@@ -1974,9 +2123,73 @@ class MorningCoffeeCard extends HTMLElement {
       if (badge) {
         if (param === "mass") badge.textContent = `${draft.mass_output} g`;
         else if (param === "temp") badge.textContent = `${draft.temperature} °C`;
-        else if (param === "bloom") badge.textContent = draft.bloom_duration ? `${draft.bloom_duration} s` : "Off (0s)";
-        else if (param === "bypass") badge.textContent = draft.water_output ? `${draft.water_output} mL` : "None (0mL)";
+        else if (param === "bloom" || param === "bloom_sec") badge.textContent = draft.bloom_duration ? `${draft.bloom_duration} s` : "Off (0s)";
+        else if (param === "bypass" || param === "water") badge.textContent = draft.water_output ? `+${draft.water_output} mL` : "None";
       }
+
+      if (param === "bloom" || param === "bloom_sec") {
+        brewSec.querySelectorAll(".quick-preset-chip.bloom-chip").forEach((ch) => {
+          ch.classList.toggle("active", parseFloat(ch.getAttribute("data-val")) === draft.bloom_duration);
+        });
+        const bloomToggle = brewSec.querySelector('.station-toggle-btn[data-toggle="bloom"]');
+        if (bloomToggle) {
+          bloomToggle.textContent = draft.bloom_enabled ? "Enabled" : "Off";
+          bloomToggle.classList.toggle("bloom-active", draft.bloom_enabled);
+        }
+        const bSlider = brewSec.querySelector('.studio-range-slider[data-slider="bloom"]');
+        if (bSlider && parseFloat(bSlider.value) !== draft.bloom_duration) {
+          bSlider.value = draft.bloom_duration;
+        }
+      }
+
+      if (param === "bypass" || param === "water" || param === "mass") {
+        brewSec.querySelectorAll(".quick-preset-chip.bypass-chip").forEach((ch) => {
+          ch.classList.toggle("active", parseFloat(ch.getAttribute("data-val")) === draft.water_output);
+        });
+        const bypassToggle = brewSec.querySelector('.station-toggle-btn[data-toggle="bypass"]');
+        if (bypassToggle) {
+          bypassToggle.textContent = draft.bypass_enabled ? "Enabled" : "Off";
+          bypassToggle.classList.toggle("bypass-active", draft.bypass_enabled);
+        }
+        const bySlider = brewSec.querySelector('.studio-range-slider[data-slider="bypass"]');
+        if (bySlider && parseFloat(bySlider.value) !== draft.water_output) {
+          bySlider.value = draft.water_output;
+        }
+
+        const coffee = draft.mass_output || 40;
+        const water = draft.water_output || 0;
+        const totalLiquid = coffee + water;
+        const coffeePct = Math.round((coffee / totalLiquid) * 100);
+        const waterPct = 100 - coffeePct;
+        const ratioStr = water > 0 ? `1:${(water / coffee).toFixed(1)} dilution` : "straight extraction";
+        const beverageStyle = water >= 150 ? "Long Black / Cafe Crema" : water >= 80 ? "Americano" : water > 0 ? "Extended Espresso" : "Pure Espresso";
+
+        const cupBarCoffee = brewSec.querySelector(".cup-bar-coffee");
+        if (cupBarCoffee) {
+          cupBarCoffee.style.width = `${coffeePct}%`;
+          cupBarCoffee.innerHTML = `<span>☕ ${coffee}g Coffee (${coffeePct}%)</span>`;
+        }
+        let cupBarWater = brewSec.querySelector(".cup-bar-water");
+        const cupMeter = brewSec.querySelector(".cup-composition-meter");
+        if (cupMeter) {
+          if (water > 0) {
+            if (!cupBarWater) {
+              cupBarWater = document.createElement("div");
+              cupBarWater.className = "cup-bar-water";
+              cupMeter.appendChild(cupBarWater);
+            }
+            cupBarWater.style.width = `${waterPct}%`;
+            cupBarWater.innerHTML = `<span>💧 +${water}mL Water (${waterPct}%)</span>`;
+          } else if (cupBarWater) {
+            cupBarWater.remove();
+          }
+        }
+        const cupStats = brewSec.querySelector(".cup-stats-row");
+        if (cupStats) {
+          cupStats.innerHTML = `<span>Cup Size: <strong>${totalLiquid} mL</strong></span><span>Style: <strong>${beverageStyle}</strong> (${ratioStr})</span>`;
+        }
+      }
+
       const brewBtnSpan = brewSec.querySelector("#btn-studio-brew span");
       if (brewBtnSpan) {
         brewBtnSpan.textContent = `Brew Now (${draft.mass_output || 40}g @ ${draft.temperature || 94}°C${draft.water_output ? ` + ${draft.water_output}mL water` : ""})`;
@@ -1984,14 +2197,16 @@ class MorningCoffeeCard extends HTMLElement {
       const presetBtns = brewSec.querySelectorAll(".preset-btn");
       presetBtns.forEach((btn) => btn.classList.toggle("active", btn.getAttribute("data-preset") === "custom"));
 
-      const svgBox = brewSec.querySelector(".studio-svg-box");
-      if (svgBox) {
-        const tempContainer = document.createElement("div");
-        tempContainer.innerHTML = this._generateStudioSvg(draft);
-        const newSvgBox = tempContainer.firstElementChild;
-        if (newSvgBox) {
-          svgBox.replaceWith(newSvgBox);
-          this._setupStudioInteraction(newSvgBox);
+      if (param === "mass") {
+        const svgBox = brewSec.querySelector(".studio-svg-box");
+        if (svgBox) {
+          const tempContainer = document.createElement("div");
+          tempContainer.innerHTML = this._generateStudioSvg(draft);
+          const newSvgBox = tempContainer.firstElementChild;
+          if (newSvgBox) {
+            svgBox.replaceWith(newSvgBox);
+            this._setupStudioInteraction(newSvgBox);
+          }
         }
       }
       return;
@@ -2006,9 +2221,16 @@ class MorningCoffeeCard extends HTMLElement {
       this._draftCurve.bloom_enabled = !this._draftCurve.bloom_enabled;
       if (this._draftCurve.bloom_enabled && !this._draftCurve.bloom_duration) {
         this._draftCurve.bloom_duration = 10;
+      } else if (!this._draftCurve.bloom_enabled) {
+        this._draftCurve.bloom_duration = 0;
       }
     } else if (toggle === "bypass") {
       this._draftCurve.bypass_enabled = !this._draftCurve.bypass_enabled;
+      if (this._draftCurve.bypass_enabled && !this._draftCurve.water_output) {
+        this._draftCurve.water_output = 120;
+      } else if (!this._draftCurve.bypass_enabled) {
+        this._draftCurve.water_output = 0;
+      }
     }
     this._activePresetKey = "custom";
     this._brewSectionDirty = true;
@@ -2265,11 +2487,11 @@ class MorningCoffeeCard extends HTMLElement {
           <button class="preset-btn${preset === "custom" ? " active" : ""}" data-preset="custom">Custom</button>
         </div>
 
-        <!-- Interactive SVG Area with 50% smaller handles, stage colors & bloom/bypass -->
+        <!-- Interactive Extraction Curve Area with 50% smaller handles & stage colors -->
         ${this._generateStudioSvg(draft)}
 
-        <!-- Sliders with MDI Icons for Yield, Temp, Bloom & Water Bypass -->
-        <div class="studio-sliders-grid">
+        <!-- Primary Yield & Temperature Controls -->
+        <div class="studio-sliders-grid" style="margin-top: 10px;">
           <!-- Brew Yield Slider -->
           <div class="slider-control-group">
             <div class="slider-header">
@@ -2303,39 +2525,13 @@ class MorningCoffeeCard extends HTMLElement {
             </div>
             <input type="range" class="studio-range-slider" min="65" max="99" step="1" value="${draft.temperature || 94}" data-slider="temp" />
           </div>
-
-          <!-- Bloom Time Slider -->
-          <div class="slider-control-group">
-            <div class="slider-header">
-              <div class="slider-title">
-                <ha-icon icon="mdi:timer-sand"></ha-icon>
-                <span>Bloom Time</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <button class="step-ctrl-btn" data-param="bloom_sec" data-step="-2">-2</button>
-                <span class="slider-val-badge" data-badge="bloom">${draft.bloom_duration ? `${draft.bloom_duration} s` : "Off (0s)"}</span>
-                <button class="step-ctrl-btn" data-param="bloom_sec" data-step="2">+2</button>
-              </div>
-            </div>
-            <input type="range" class="studio-range-slider" min="0" max="30" step="1" value="${draft.bloom_duration || 0}" data-slider="bloom" />
-          </div>
-
-          <!-- Water Bypass Slider (Americano) -->
-          <div class="slider-control-group">
-            <div class="slider-header">
-              <div class="slider-title">
-                <ha-icon icon="mdi:water-plus"></ha-icon>
-                <span>Water Bypass</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <button class="step-ctrl-btn" data-param="water" data-step="-10">-10</button>
-                <span class="slider-val-badge" data-badge="bypass" style="color: #3498db;">${draft.water_output ? `${draft.water_output} mL` : "None (0mL)"}</span>
-                <button class="step-ctrl-btn" data-param="water" data-step="10">+10</button>
-              </div>
-            </div>
-            <input type="range" class="studio-range-slider" min="0" max="250" step="5" value="${draft.water_output || 0}" data-slider="bypass" />
-          </div>
         </div>
+
+        <!-- Dedicated Bloom & Degas Station -->
+        ${this._renderBloomStation(draft)}
+
+        <!-- Dedicated Cup Composition & Water Bypass Station -->
+        ${this._renderBypassStation(draft)}
 
         <!-- Footer Actions -->
         <div class="studio-actions-footer">
@@ -2347,6 +2543,97 @@ class MorningCoffeeCard extends HTMLElement {
             <ha-icon icon="mdi:coffee-maker"></ha-icon>
             <span>Brew Now (${draft.mass_output || 40}g @ ${draft.temperature || 94}°C${draft.water_output ? ` + ${draft.water_output}mL water` : ""})</span>
           </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderBloomStation(draft) {
+    const isBloomOn = !!draft.bloom_enabled && (draft.bloom_duration || 0) > 0;
+    const dur = draft.bloom_duration || 0;
+
+    return `
+      <div class="studio-station-card">
+        <div class="station-header">
+          <div class="station-title">
+            <ha-icon icon="mdi:timer-sand" style="color: #f39c12;"></ha-icon>
+            <span>Bloom & Degas Pause</span>
+            <span class="slider-val-badge" data-badge="bloom" style="color: #f39c12;">${dur ? `${dur} s` : "Off (0s)"}</span>
+          </div>
+          <button class="station-toggle-btn${isBloomOn ? " bloom-active" : ""}" data-toggle="bloom">
+            ${isBloomOn ? "Enabled" : "Off"}
+          </button>
+        </div>
+        <div class="station-desc">
+          Pre-wets capsule at Pre-Infusion, pauses pump to degas grounds and enhance extraction clarity, then ramps to Infusion.
+        </div>
+        <div class="station-chips-row">
+          <button class="quick-preset-chip bloom-chip${dur === 0 ? " active" : ""}" data-param="bloom" data-val="0">Off (0s)</button>
+          <button class="quick-preset-chip bloom-chip${dur === 5 ? " active" : ""}" data-param="bloom" data-val="5">Light (5s)</button>
+          <button class="quick-preset-chip bloom-chip${dur === 10 ? " active" : ""}" data-param="bloom" data-val="10">Standard (10s)</button>
+          <button class="quick-preset-chip bloom-chip${dur === 15 ? " active" : ""}" data-param="bloom" data-val="15">Extended (15s)</button>
+          <button class="quick-preset-chip bloom-chip${dur === 20 ? " active" : ""}" data-param="bloom" data-val="20">Long (20s)</button>
+        </div>
+        <div class="station-slider-row">
+          <button class="step-ctrl-btn" data-param="bloom_sec" data-step="-2">-2</button>
+          <input type="range" class="studio-range-slider" min="0" max="30" step="1" value="${dur}" data-slider="bloom" />
+          <button class="step-ctrl-btn" data-param="bloom_sec" data-step="2">+2</button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderBypassStation(draft) {
+    const isBypassOn = !!draft.bypass_enabled && (draft.water_output || 0) > 0;
+    const water = draft.water_output || 0;
+    const coffee = draft.mass_output || 40;
+    const totalLiquid = coffee + water;
+    const coffeePct = Math.round((coffee / totalLiquid) * 100);
+    const waterPct = 100 - coffeePct;
+    const ratioStr = water > 0 ? `1:${(water / coffee).toFixed(1)} dilution` : "straight extraction";
+    const beverageStyle = water >= 150 ? "Long Black / Cafe Crema" : water >= 80 ? "Americano" : water > 0 ? "Extended Espresso" : "Pure Espresso";
+
+    return `
+      <div class="studio-station-card">
+        <div class="station-header">
+          <div class="station-title">
+            <ha-icon icon="mdi:water-plus" style="color: #3498db;"></ha-icon>
+            <span>Cup Composition & Bypass Water</span>
+            <span class="slider-val-badge" data-badge="bypass" style="color: #3498db;">${water ? `+${water} mL` : "None"}</span>
+          </div>
+          <button class="station-toggle-btn${isBypassOn ? " bypass-active" : ""}" data-toggle="bypass">
+            ${isBypassOn ? "Enabled" : "Off"}
+          </button>
+        </div>
+        <div class="station-desc">
+          Clean hot water bypass delivered directly to cup without passing through spent capsule.
+        </div>
+        <!-- Visual Cup Meter -->
+        <div class="cup-composition-meter">
+          <div class="cup-bar-coffee" style="width: ${coffeePct}%;">
+            <span>☕ ${coffee}g Coffee (${coffeePct}%)</span>
+          </div>
+          ${water > 0 ? `
+            <div class="cup-bar-water" style="width: ${waterPct}%;">
+              <span>💧 +${water}mL Water (${waterPct}%)</span>
+            </div>
+          ` : ""}
+        </div>
+        <div class="cup-stats-row">
+          <span>Cup Size: <strong>${totalLiquid} mL</strong></span>
+          <span>Style: <strong>${beverageStyle}</strong> (${ratioStr})</span>
+        </div>
+        <div class="station-chips-row">
+          <button class="quick-preset-chip bypass-chip${water === 0 ? " active" : ""}" data-param="bypass" data-val="0">Pure Espresso (0mL)</button>
+          <button class="quick-preset-chip bypass-chip${water === 60 ? " active" : ""}" data-param="bypass" data-val="60">Short Americano (+60mL)</button>
+          <button class="quick-preset-chip bypass-chip${water === 120 ? " active" : ""}" data-param="bypass" data-val="120">Americano (+120mL)</button>
+          <button class="quick-preset-chip bypass-chip${water === 150 ? " active" : ""}" data-param="bypass" data-val="150">Long Black (+150mL)</button>
+          <button class="quick-preset-chip bypass-chip${water === 180 ? " active" : ""}" data-param="bypass" data-val="180">Filter Style (+180mL)</button>
+        </div>
+        <div class="station-slider-row">
+          <button class="step-ctrl-btn" data-param="water" data-step="-10">-10</button>
+          <input type="range" class="studio-range-slider" min="0" max="250" step="5" value="${water}" data-slider="bypass" />
+          <button class="step-ctrl-btn" data-param="water" data-step="10">+10</button>
         </div>
       </div>
     `;
@@ -2458,9 +2745,6 @@ class MorningCoffeeCard extends HTMLElement {
     const xEnd = 390;
     const yEnd = y2;
 
-    const hasBloom = draft.bloom_duration && draft.bloom_duration > 0;
-    const hasBypass = draft.water_output && draft.water_output > 0;
-
     const areaPath = `M ${x0} 130 L ${x0} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)} L ${xEnd} ${yEnd.toFixed(1)} L ${xEnd} 130 Z`;
 
     const pressureLevels = [1, 2, 3, 4, 5, 6, 7];
@@ -2474,23 +2758,12 @@ class MorningCoffeeCard extends HTMLElement {
               <stop offset="0%" stop-color="#e67e22" stop-opacity="0.28" />
               <stop offset="100%" stop-color="#e67e22" stop-opacity="0.0" />
             </linearGradient>
-            <linearGradient id="bloomZoneGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#f39c12" stop-opacity="0.25" />
-              <stop offset="100%" stop-color="#f39c12" stop-opacity="0.04" />
-            </linearGradient>
           </defs>
 
           <!-- Stage Background Columns -->
           <rect class="stage-bg-col0" x="${x0}" y="20" width="${Math.max(0, x1 - x0).toFixed(1)}" height="110" fill="rgba(26, 188, 156, 0.05)" />
           <rect class="stage-bg-col1" x="${x1.toFixed(1)}" y="20" width="${Math.max(0, x2 - x1).toFixed(1)}" height="110" fill="rgba(230, 126, 34, 0.05)" />
           <rect class="stage-bg-col2" x="${x2.toFixed(1)}" y="20" width="${Math.max(0, xEnd - x2).toFixed(1)}" height="110" fill="rgba(231, 76, 60, 0.05)" />
-
-          <!-- Optional Bloom Column Marker -->
-          ${hasBloom ? `
-            <rect class="bloom-marker-rect" x="${(x1 - 8).toFixed(1)}" y="20" width="16" height="110" fill="url(#bloomZoneGrad)" />
-            <line class="bloom-marker-line" x1="${x1.toFixed(1)}" y1="20" x2="${x1.toFixed(1)}" y2="130" stroke="#f39c12" stroke-width="1.5" stroke-dasharray="3 3" />
-            <text class="bloom-marker-text" x="${x1.toFixed(1)}" y="16" fill="#f39c12" font-size="8" font-weight="bold" text-anchor="middle" font-family="sans-serif">⏳ ${draft.bloom_duration}s Bloom</text>
-          ` : ""}
 
           <!-- Grid Lines & Pressure Labels -->
           ${pressureLevels.map((p) => {
@@ -2520,13 +2793,6 @@ class MorningCoffeeCard extends HTMLElement {
           <!-- Segment 2: Post-Infusion Line (Coral) -->
           <line class="studio-curve-seg2 stage-seg" data-seg="2" x1="${x2.toFixed(1)}" y1="${y2.toFixed(1)}" x2="${xEnd}" y2="${yEnd.toFixed(1)}" stroke="#e74c3c" stroke-width="2.5" stroke-linecap="round" />
 
-          <!-- Optional Bypass Water Flow Tail (Blue) -->
-          ${hasBypass ? `
-            <line class="stage-seg-bypass" x1="390" y1="${yEnd.toFixed(1)}" x2="414" y2="${yEnd.toFixed(1)}" stroke="#3498db" stroke-width="3" stroke-dasharray="2 3" stroke-linecap="round" />
-            <circle cx="414" cy="${yEnd.toFixed(1)}" r="3" fill="#3498db" />
-            <text x="402" y="145" fill="#3498db" font-size="7.5" font-weight="bold" text-anchor="middle" font-family="sans-serif">+${draft.water_output}mL</text>
-          ` : ""}
-
           <!-- Draggable Handles: 50% smaller visual radius (r=3.5) + invisible touch target (r=14) -->
           <circle class="studio-handle" data-handle="0" cx="${x0}" cy="${y0.toFixed(1)}" r="3.5" fill="#fff" stroke="#1abc9c" stroke-width="1.8" />
           <circle class="studio-handle-hit" data-handle="0" cx="${x0}" cy="${y0.toFixed(1)}" r="14" fill="transparent" pointer-events="all" />
@@ -2544,12 +2810,6 @@ class MorningCoffeeCard extends HTMLElement {
             <span class="stage-pill-dot" style="background: #1abc9c;"></span>
             <strong>Pre-Infusion:</strong> <span class="pill-val">0g @ ${s0.pressure}b</span>
           </span>
-          ${hasBloom ? `
-            <span class="stage-pill" data-pill="bloom" style="border-color: rgba(243, 156, 18, 0.4); color: #f39c12;">
-              <span class="stage-pill-dot" style="background: #f39c12;"></span>
-              <strong>Bloom:</strong> ${draft.bloom_duration}s
-            </span>
-          ` : ""}
           <span class="stage-pill" data-pill="1">
             <span class="stage-pill-dot" style="background: #e67e22;"></span>
             <strong>Infusion:</strong> <span class="pill-val">${s1.output}g @ ${s1.pressure}b</span>
@@ -2558,12 +2818,6 @@ class MorningCoffeeCard extends HTMLElement {
             <span class="stage-pill-dot" style="background: #e74c3c;"></span>
             <strong>Post-Infusion:</strong> <span class="pill-val">${s2.output}g @ ${s2.pressure}b</span>
           </span>
-          ${hasBypass ? `
-            <span class="stage-pill" data-pill="bypass" style="border-color: rgba(52, 152, 219, 0.4); color: #3498db;">
-              <span class="stage-pill-dot" style="background: #3498db;"></span>
-              <strong>Bypass:</strong> +${draft.water_output}mL
-            </span>
-          ` : ""}
         </div>
       </div>
     `;

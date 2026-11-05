@@ -212,6 +212,18 @@ save_profile:
   name: Save Custom Profile
   description: Saves a named custom brew profile to local storage.
   fields:
+    entity_id:
+      name: Entity
+      description: The Morning Coffee Machine entity.
+      selector:
+        entity:
+          integration: morning
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
     name:
       name: Profile Name
       description: Friendly name for the profile.
@@ -241,6 +253,18 @@ toggle_favorite:
   name: Toggle Favorite
   description: Toggles favorite bookmark status for a recipe.
   fields:
+    entity_id:
+      name: Entity
+      description: The Morning Coffee Machine entity.
+      selector:
+        entity:
+          integration: morning
+    device_id:
+      name: Device
+      description: The Morning Coffee Machine device.
+      selector:
+        device:
+          integration: morning
     profile_id:
       name: Profile ID
       description: ID of the profile to bookmark or unbookmark.

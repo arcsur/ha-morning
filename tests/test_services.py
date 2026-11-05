@@ -169,6 +169,37 @@ class TestMorningServices(unittest.IsolatedAsyncioTestCase):
         self.coordinator.async_toggle_favorite.assert_called_once_with(123, None)
         self.assertTrue(fav_res["is_favorite"])
 
+    async def test_service_schemas_allow_entity_id(self):
+        """Test that voluptuous schemas accept entity_id without extra key errors."""
+        from custom_components.morning.services import (
+            BREW_RECIPE_SCHEMA,
+            CANCEL_BREW_SCHEMA,
+            SAVE_PROFILE_SCHEMA,
+            TOGGLE_FAVORITE_SCHEMA,
+        )
+
+        # toggle_favorite schema allows entity_id
+        valid_fav = TOGGLE_FAVORITE_SCHEMA(
+            {"entity_id": "sensor.dagusmorning_status", "profile_id": "fav-1", "recipe": {"name": "Test"}}
+        )
+        self.assertEqual(valid_fav["entity_id"], ["sensor.dagusmorning_status"])
+
+        # save_profile schema allows entity_id
+        valid_save = SAVE_PROFILE_SCHEMA(
+            {"entity_id": "sensor.dagusmorning_status", "name": "Custom Profile", "temperature": 94}
+        )
+        self.assertEqual(valid_save["entity_id"], ["sensor.dagusmorning_status"])
+
+        # brew_recipe schema allows entity_id
+        valid_brew = BREW_RECIPE_SCHEMA(
+            {"entity_id": "sensor.dagusmorning_status", "name": "Espresso", "temperature": 94, "mass_output": 36}
+        )
+        self.assertEqual(valid_brew["entity_id"], ["sensor.dagusmorning_status"])
+
+        # cancel_brew schema allows entity_id
+        valid_cancel = CANCEL_BREW_SCHEMA({"entity_id": "sensor.dagusmorning_status"})
+        self.assertEqual(valid_cancel["entity_id"], ["sensor.dagusmorning_status"])
+
     async def test_unload_services(self):
         """Test unloading services."""
         await async_setup_services(self.hass)

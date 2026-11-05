@@ -180,6 +180,7 @@ if "homeassistant" not in sys.modules:
             async def async_press(self):
                 pass
 
+        ha_mock.const.ATTR_ENTITY_ID = "entity_id"
         ha_mock.const.PERCENTAGE = "%"
         ha_mock.const.UnitOfTime.SECONDS = "s"
         ha_mock.const.UnitOfVolume = MagicMock()
@@ -207,8 +208,11 @@ if "homeassistant" not in sys.modules:
         sys.modules["homeassistant.helpers.aiohttp_client"] = ha_mock.helpers.aiohttp_client
         sys.modules["homeassistant.helpers.config_validation"] = ha_mock.helpers.config_validation
         sys.modules["homeassistant.helpers.config_validation"].string = str
+        sys.modules["homeassistant.helpers.config_validation"].entity_ids_or_uuids = lambda val: [val] if isinstance(val, str) else list(val)
+        sys.modules["homeassistant.helpers.config_validation"].entity_id = lambda val: str(val)
         sys.modules["homeassistant.helpers.config_validation"].multi_select = lambda opts: lambda val: val
         sys.modules["homeassistant.helpers.device_registry"] = ha_mock.helpers.device_registry
+        sys.modules["homeassistant.helpers.entity_registry"] = ha_mock.helpers.entity_registry
         sys.modules["homeassistant.helpers.entity_platform"] = ha_mock.helpers.entity_platform
         ha_mock.helpers.storage = MagicMock()
         ha_mock.helpers.storage.Store = MockStore

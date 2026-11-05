@@ -6,9 +6,11 @@ import logging
 from typing import Any
 
 import voluptuous as vol
+from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .client import MorningClient
 from .const import (
@@ -34,41 +36,42 @@ ATTR_DEVICE_ID = "device_id"
 ATTR_MACHINE_ID = "machine_id"
 ATTR_TIMEOUT = "timeout"
 
+BASE_TARGET_SCHEMA: dict[Any, Any] = {
+    vol.Optional(ATTR_ENTITY_ID): cv.entity_ids_or_uuids,
+    vol.Optional(ATTR_DEVICE_ID): cv.string,
+    vol.Optional(ATTR_MACHINE_ID): cv.string,
+}
+
 SET_STANDBY_TIMEOUT_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_DEVICE_ID): cv.string,
-        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        **BASE_TARGET_SCHEMA,
         vol.Required(ATTR_TIMEOUT): vol.All(vol.Coerce(int), vol.Range(min=300, max=7200)),
     }
 )
 
 MACHINE_ACTION_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_DEVICE_ID): cv.string,
-        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        **BASE_TARGET_SCHEMA,
     }
 )
 
 REFILL_WATER_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_DEVICE_ID): cv.string,
-        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        **BASE_TARGET_SCHEMA,
         vol.Optional(ATTR_AMOUNT_ML): vol.All(vol.Coerce(int), vol.Range(min=1, max=3000)),
     }
 )
 
 RECORD_PURGE_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_DEVICE_ID): cv.string,
-        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        **BASE_TARGET_SCHEMA,
         vol.Optional(ATTR_AMOUNT_ML): vol.All(vol.Coerce(int), vol.Range(min=1, max=500)),
     }
 )
 
 BREW_RECIPE_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_DEVICE_ID): cv.string,
-        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        **BASE_TARGET_SCHEMA,
         vol.Optional("profile_id"): vol.Any(cv.string, vol.Coerce(int)),
         vol.Optional("name"): cv.string,
         vol.Optional("temperature"): vol.All(vol.Coerce(int), vol.Range(min=65, max=100)),
@@ -86,13 +89,13 @@ BREW_RECIPE_SCHEMA = vol.Schema(
 
 CANCEL_BREW_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_DEVICE_ID): cv.string,
-        vol.Optional(ATTR_MACHINE_ID): cv.string,
+        **BASE_TARGET_SCHEMA,
     }
 )
 
 SEARCH_RECIPES_SCHEMA = vol.Schema(
     {
+        **BASE_TARGET_SCHEMA,
         vol.Required("query"): cv.string,
         vol.Optional("page_size"): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
     }
@@ -100,6 +103,7 @@ SEARCH_RECIPES_SCHEMA = vol.Schema(
 
 SAVE_PROFILE_SCHEMA = vol.Schema(
     {
+        **BASE_TARGET_SCHEMA,
         vol.Required("name"): cv.string,
         vol.Optional("temperature"): vol.All(vol.Coerce(int), vol.Range(min=65, max=100)),
         vol.Optional("mass_output"): vol.All(vol.Coerce(int), vol.Range(min=10, max=250)),
@@ -112,6 +116,7 @@ SAVE_PROFILE_SCHEMA = vol.Schema(
 
 TOGGLE_FAVORITE_SCHEMA = vol.Schema(
     {
+        **BASE_TARGET_SCHEMA,
         vol.Required("profile_id"): vol.Any(cv.string, vol.Coerce(int)),
         vol.Optional("is_favorite"): cv.boolean,
         vol.Optional("recipe"): dict,
@@ -120,13 +125,25 @@ TOGGLE_FAVORITE_SCHEMA = vol.Schema(
 
 
 def _get_machine_id(hass: HomeAssistant, call: ServiceCall) -> str | None:
-    """Resolve machine_id from direct argument or device_id."""
+    """Resolve machine_id from direct argument, device_id, or entity_id."""
     if ATTR_MACHINE_ID in call.data:
         return str(call.data[ATTR_MACHINE_ID])
 
-    if ATTR_DEVICE_ID in call.data:
+    device_id = call.data.get(ATTR_DEVICE_ID)
+
+    if not device_id and ATTR_ENTITY_ID in call.data:
+        ent_reg = er.async_get(hass)
+        raw_entities = call.data[ATTR_ENTITY_ID]
+        entity_ids = [raw_entities] if isinstance(raw_entities, str) else list(raw_entities)
+        for entity_id in entity_ids:
+            entity_entry = ent_reg.async_get(str(entity_id))
+            if entity_entry and entity_entry.device_id:
+                device_id = entity_entry.device_id
+                break
+
+    if device_id:
         device_reg = dr.async_get(hass)
-        device_entry = device_reg.async_get(call.data[ATTR_DEVICE_ID])
+        device_entry = device_reg.async_get(device_id)
         if device_entry:
             for domain, identifier in device_entry.identifiers:
                 if domain == DOMAIN:
@@ -359,7 +376,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_save_profile(call: ServiceCall) -> dict[str, Any]:
         """Handle saving a custom brew profile."""
-        res = _get_coordinator_for_machine(hass, None)
+        machine_id = _get_machine_id(hass, call)
+        res = _get_coordinator_for_machine(hass, machine_id)
         if not res:
             return {}
         coordinator, _ = res
@@ -368,7 +386,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     async def handle_toggle_favorite(call: ServiceCall) -> dict[str, Any]:
         """Handle toggling favorite on a profile."""
-        res = _get_coordinator_for_machine(hass, None)
+        machine_id = _get_machine_id(hass, call)
+        res = _get_coordinator_for_machine(hass, machine_id)
         if not res:
             return {"is_favorite": False}
         coordinator, _ = res

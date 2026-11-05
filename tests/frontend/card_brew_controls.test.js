@@ -394,14 +394,59 @@ describe("MorningCoffeeCard Brew Initiation & Controls", () => {
     expect(card._draftCurve.water_output).toBe(120);
     expect(card._draftCurve.bypass_enabled).toBe(true);
 
-    // Bypass water tail appears in SVG with #3498db
-    const bypassTail = card.shadowRoot.querySelector(".stage-seg-bypass");
-    expect(bypassTail).not.toBeNull();
-    expect(bypassTail.getAttribute("stroke")).toBe("#3498db");
+    // Visual Cup Composition Meter reflects dilution water
+    const cupWater = card.shadowRoot.querySelector(".cup-bar-water");
+    expect(cupWater).not.toBeNull();
+    expect(cupWater.textContent).toContain("120mL Water");
+
+    const bypassBadge = card.shadowRoot.querySelector('.slider-val-badge[data-badge="bypass"]');
+    expect(bypassBadge.textContent).toContain("+120 mL");
 
     // Brew Now button reflects coffee yield + bypass water
     const brewBtn = card.shadowRoot.querySelector("#btn-studio-brew");
     expect(brewBtn.textContent).toContain("35g @ 94°C + 120mL water");
+  });
+
+  it("clicking favorite star on recipe card calls morning.toggle_favorite service with entity_id", () => {
+    const drawerBtn = card.shadowRoot.querySelector("#btn-toggle-drawer");
+    drawerBtn.click();
+
+    const favTab = card.shadowRoot.querySelector('.subtab-btn[data-subtab="favorites"]');
+    if (favTab) favTab.click();
+
+    const favBtn = card.shadowRoot.querySelector('.icon-action-btn.fav[data-action="toggle-fav"]');
+    expect(favBtn).not.toBeNull();
+    favBtn.click();
+
+    expect(mockHass.callService).toHaveBeenCalledWith("morning", "toggle_favorite", expect.objectContaining({
+      entity_id: "sensor.dagusmorning_status",
+      profile_id: "fav-1",
+    }));
+  });
+
+  it("clicking barista quick chips in Bloom and Cup Composition stations updates values and cup meter", () => {
+    const drawerBtn = card.shadowRoot.querySelector("#btn-toggle-drawer");
+    drawerBtn.click();
+    const studioTab = card.shadowRoot.querySelector('.tab-btn[data-tab="studio"]');
+    studioTab.click();
+
+    // Tap Bloom 'Standard (10s)' quick chip
+    const bloom10Chip = card.shadowRoot.querySelector('.quick-preset-chip.bloom-chip[data-val="10"]');
+    expect(bloom10Chip).not.toBeNull();
+    bloom10Chip.click();
+
+    expect(card._draftCurve.bloom_duration).toBe(10);
+    expect(card._draftCurve.bloom_enabled).toBe(true);
+    expect(card.shadowRoot.querySelector('.slider-val-badge[data-badge="bloom"]').textContent).toContain("10 s");
+
+    // Tap Bypass 'Americano (+120mL)' quick chip
+    const bypass120Chip = card.shadowRoot.querySelector('.quick-preset-chip.bypass-chip[data-val="120"]');
+    expect(bypass120Chip).not.toBeNull();
+    bypass120Chip.click();
+
+    expect(card._draftCurve.water_output).toBe(120);
+    expect(card._draftCurve.bypass_enabled).toBe(true);
+    expect(card.shadowRoot.querySelector('.cup-bar-water').textContent).toContain("120mL Water");
   });
 
   it("telemetry updates while drawer is open do not rebuild #sec-brew or jump scroll", () => {
